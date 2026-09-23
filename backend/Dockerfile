@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir "setuptools<70" \
     && pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu --no-build-isolation -r requirements.txt
 
 # Download spaCy English model
-RUN python -m spacy download en_core_web_sm
+RUN pip install --no-cache-dir https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 
 # Pre-download Whisper base model weights into image layer
 RUN python -c "import whisper; whisper.load_model('base')"
