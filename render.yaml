@@ -1,54 +1,49 @@
-# Render.com Deployment Configuration for AegisAI Backend
-# This file defines the services, databases, and environment variables needed
+# Render.com Deployment Blueprint for AegisAI Backend
+# Reference: https://render.com/docs/blueprint-spec
 
 services:
-  # ── Backend API Service ──────────────────────────────────────────
+  # ── Backend API Service (Docker) ─────────────────────────────────
   - type: web
     name: aegisai-backend
-    env: python
-    plan: starter  # Use 'free' for basic, 'starter' for more resources
-    buildCommand: |
-      pip install -r requirements.txt
-      python -m spacy download en_core_web_sm
-      python -c "import whisper; whisper.load_model('base')"
-    startCommand: uvicorn app.main:socket_app --host 0.0.0.0 --port $PORT
-    autoDeploy: true
-    # Health check path
+    runtime: docker
+    plan: starter
+    rootDir: backend
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
     healthCheckPath: /api/health
-
-    # Environment variables - these can be set in the Render dashboard
-    # or via an .env file committed to the repo
-    envVars:
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      JWT_SECRET: ${JWT_SECRET}
-      WHISPER_MODEL: ${WHISPER_MODEL}
-      NLP_MODEL_PATH: ${NLP_MODEL_PATH}
-      MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN}
-      TWITTER_BEARER_TOKEN: ${TWITTER_BEARER_TOKEN}
-
-  # ── PostgreSQL Database ──────────────────────────────────────────
-  - type: postgresql
-    name: aegisai-db
-    plan: free
-    autoStart: true
-    autoDeploy: true
+    preDeployCommand: alembic upgrade head
+    autoDeployTrigger: commit
 
     envVars:
-      POSTGRES_DB: aegisai
-      POSTGRES_USER: aegisai
-      POSTGRES_PASSWORD: aegisai_secret
+      - key: DATABASE_URL
+        fromDatabase:
+          name: aegisai-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: aegisai-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: WHISPER_MODEL
+        value: base
+      - key: NLP_MODEL_PATH
+        value: models/nlp/v1
+      - key: MAPBOX_ACCESS_TOKEN
+        sync: false
+      - key: TWITTER_BEARER_TOKEN
+        sync: false
 
-  # ── Redis ────────────────────────────────────────────────────────
-  - type: redis
+  # ── Redis Key-Value Store ─────────────────────────────────────────
+  - type: keyvalue
     name: aegisai-redis
     plan: free
-    autoStart: true
-    autoDeploy: true
+    ipAllowList: []
 
-  # ── Object Storage (Optional - for media/audio uploads) ──────────
-  # Uncomment and configure if using S3-compatible storage
-  # - type: s3
-  #   name: aegisai-media
-  #   bucket: aegisai-media-bucket
-  #   region: us-east-1
+# ── PostgreSQL Database ──────────────────────────────────────────
+databases:
+  - name: aegisai-db
+    databaseName: aegisai
+    user: aegisai
+    plan: free

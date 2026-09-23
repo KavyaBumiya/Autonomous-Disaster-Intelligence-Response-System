@@ -3,6 +3,7 @@ Central configuration loaded from environment variables via pydantic-settings.
 All settings are read once at startup and available via `get_settings()`.
 """
 from functools import lru_cache
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +12,16 @@ class Settings(BaseSettings):
 
     # ── Database ──────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://aegisai:aegisai_secret@db:5432/aegisai"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def assemble_db_connection(cls, v: str) -> str:
+        if isinstance(v, str):
+            if v.startswith("postgres://"):
+                return v.replace("postgres://", "postgresql+asyncpg://", 1)
+            elif v.startswith("postgresql://") and not v.startswith("postgresql+asyncpg://"):
+                return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v
 
     # ── Redis ─────────────────────────────────────────────────
     redis_url: str = "redis://redis:6379/0"
