@@ -5,7 +5,7 @@ Supports both online mode (Ollama LLM) and offline demo mode.
 from datetime import datetime, timezone
 import json
 import httpx
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel, Field
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
