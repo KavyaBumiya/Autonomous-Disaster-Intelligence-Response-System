@@ -73,6 +73,12 @@ def similarity_score(text_a: str, text_b: str) -> float:
     return m_a.jaccard(m_b)
 
 
+\
+
+def deduplicate_reports(text: str, post_id: str) -> bool:
+    """Check if a text is a duplicate of previously seen posts, and register it."""
+    return is_duplicate(text, post_id)
+
 def reset_index() -> None:
     """Clear the LSH index — used between demo runs."""
     global _lsh, _minhashes
