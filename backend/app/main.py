@@ -74,6 +74,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Root path & favicon � prevent 404 on / and /favicon.ico
+@app.get("/", include_in_schema=False)
+async def root():
+    """Redirect root to API health check for frontend compatibility."""
+    return {"message": "AegisAI API", "docs": "/api/health"}
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Return no-content for favicon to prevent 404 console spam."""
+    return Response(status_code=204)
+
+
 # ── Static files (audio uploads) ─────────────────────────────
 app.mount("/media", StaticFiles(directory=settings.media_dir, check_dir=False), name="media")
 
