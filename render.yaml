@@ -1,0 +1,54 @@
+# Render.com Deployment Configuration for AegisAI Backend
+# This file defines the services, databases, and environment variables needed
+
+services:
+  # ── Backend API Service ──────────────────────────────────────────
+  - type: web
+    name: aegisai-backend
+    env: python
+    plan: starter  # Use 'free' for basic, 'starter' for more resources
+    buildCommand: |
+      pip install -r requirements.txt
+      python -m spacy download en_core_web_sm
+      python -c "import whisper; whisper.load_model('base')"
+    startCommand: uvicorn app.main:socket_app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    # Health check path
+    healthCheckPath: /api/health
+
+    # Environment variables - these can be set in the Render dashboard
+    # or via an .env file committed to the repo
+    envVars:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      WHISPER_MODEL: ${WHISPER_MODEL}
+      NLP_MODEL_PATH: ${NLP_MODEL_PATH}
+      MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN}
+      TWITTER_BEARER_TOKEN: ${TWITTER_BEARER_TOKEN}
+
+  # ── PostgreSQL Database ──────────────────────────────────────────
+  - type: postgresql
+    name: aegisai-db
+    plan: free
+    autoStart: true
+    autoDeploy: true
+
+    envVars:
+      POSTGRES_DB: aegisai
+      POSTGRES_USER: aegisai
+      POSTGRES_PASSWORD: aegisai_secret
+
+  # ── Redis ────────────────────────────────────────────────────────
+  - type: redis
+    name: aegisai-redis
+    plan: free
+    autoStart: true
+    autoDeploy: true
+
+  # ── Object Storage (Optional - for media/audio uploads) ──────────
+  # Uncomment and configure if using S3-compatible storage
+  # - type: s3
+  #   name: aegisai-media
+  #   bucket: aegisai-media-bucket
+  #   region: us-east-1

@@ -1,0 +1,45 @@
+# Environment
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Models (large binary files — use Git LFS or download script)
+models/nlp/v1/pytorch_model.bin
+models/nlp/v1/model.safetensors
+*.ckpt
+*.pt
+
+# Whisper cache
+.cache/
+
+# Audio uploads
+backend/media/audio/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# DB
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
