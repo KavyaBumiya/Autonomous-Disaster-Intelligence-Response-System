@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
 
     # ── Auth ──────────────────────────────────────────────────
-    jwt_secret: str = "change_this_in_production"
+    jwt_secret: str = "local-development-secret-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
 
