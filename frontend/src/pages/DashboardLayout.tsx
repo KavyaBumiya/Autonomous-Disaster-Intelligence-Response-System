@@ -235,10 +235,14 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
   const zones = useMemo(() => zoneResponse?.zones ?? [], [zoneResponse]);
   const zonesUnavailable = !loadingZones && zones.length === 0;
+  const apiBase = (import.meta.env.VITE_API_BASE_URL || "/").replace(/\/$/, "");
+  const isLocalBackend = apiBase === "" || apiBase === "/" || apiBase.includes("localhost") || apiBase.includes("127.0.0.1");
   const zoneErrorMessage = axios.isAxiosError(zonesError)
     ? zonesError.response?.status === 401
       ? "Sign in with an operator account to load live zones."
-      : "Backend API is offline. Start Docker Desktop and run docker compose up."
+      : isLocalBackend
+        ? "Backend API is offline. Start Docker Desktop and run docker compose up."
+        : `Backend API is unreachable at ${apiBase || window.location.origin}. Check VITE_API_BASE_URL and that the API is running.`
     : "No live zones returned from the backend.";
 
   // Live stats — derived from backend queries (not hardcoded)
