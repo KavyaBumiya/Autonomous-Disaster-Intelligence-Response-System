@@ -27,6 +27,19 @@ const api = axios.create({
 const TOKEN_KEY = "aegis_token";
 const ROLE_KEY = "aegis_role";
 
+type AuthListener = (authenticated: boolean) => void;
+const authListeners = new Set<AuthListener>();
+
+/** Subscribe to login/logout so health store can update AUTH status. */
+export function onAuthChange(fn: AuthListener): () => void {
+  authListeners.add(fn);
+  return () => authListeners.delete(fn);
+}
+
+function notifyAuthChange(authenticated: boolean): void {
+  authListeners.forEach((fn) => fn(authenticated));
+}
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem(TOKEN_KEY);
@@ -40,11 +53,13 @@ export function getRole(): string | null {
 export function setAuth(token: string, role: string): void {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(ROLE_KEY, role);
+  notifyAuthChange(true);
 }
 
 export function clearAuth(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(ROLE_KEY);
+  notifyAuthChange(false);
 }
 
 // Attach JWT from localStorage on every request

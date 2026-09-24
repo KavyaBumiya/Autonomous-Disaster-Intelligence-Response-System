@@ -4,6 +4,7 @@
  */
 import { create } from "zustand";
 import { getApiHealth, getCommandHealth } from "@/services/health";
+import { onAuthChange } from "@/services/api";
 import {
   calculateOverallHealth,
   createInitialHealth,
@@ -13,22 +14,33 @@ import {
 } from "@/utils/healthStatus";
 
 const POLL_MS = 45_000;
+const TOKEN_KEY = "aegis_token";
+
+function readAuthStatus(): ServiceStatus {
+  if (typeof window === "undefined") return "UNKNOWN";
+  return localStorage.getItem(TOKEN_KEY) ? "ONLINE" : "REQUIRED";
+}
 
 interface SystemHealthStore extends SystemHealth {
   refresh: () => Promise<void>;
   setRealtime: (status: ServiceStatus) => void;
   setMaps: (status: ServiceStatus) => void;
   setPredictions: (status: ServiceStatus) => void;
+  setAuth: (status: ServiceStatus) => void;
 }
 
 function buildHealth(
-  partial: Pick<SystemHealth, "api" | "database" | "groq" | "predictions" | "maps" | "realtime"> &
+  partial: Pick<
+    SystemHealth,
+    "api" | "database" | "auth" | "groq" | "predictions" | "maps" | "realtime"
+  > &
     Partial<Pick<SystemHealth, "groqModel" | "checking" | "lastChecked">>,
 ): SystemHealth {
   const checking = partial.checking ?? false;
   const overallInput = {
     api: partial.api,
     database: partial.database,
+    auth: partial.auth,
     groq: partial.groq,
     predictions: partial.predictions,
     maps: partial.maps,
@@ -40,6 +52,7 @@ function buildHealth(
   return {
     api: partial.api,
     database: partial.database,
+    auth: partial.auth,
     groq: partial.groq,
     predictions: partial.predictions,
     maps: partial.maps,
@@ -57,16 +70,13 @@ let visibilityHandler: (() => void) | null = null;
 
 async function runChecks(): Promise<void> {
   const { setState, getState } = useSystemHealthStore;
-
-  // Keep previous resolved non-api statuses while re-checking
   const prev = getState();
 
   const [apiRes, cmdRes] = await Promise.all([getApiHealth(), getCommandHealth()]);
 
   const api: ServiceStatus = apiRes.ok ? "ONLINE" : "OFFLINE";
-
-  // DB is co-located with FastAPI in this deployment; follows API reachability.
   const database: ServiceStatus = api === "ONLINE" ? "ONLINE" : "OFFLINE";
+  const auth: ServiceStatus = api === "OFFLINE" ? "UNKNOWN" : readAuthStatus();
 
   let groq: ServiceStatus;
   let groqModel: string | null = prev.groqModel ?? null;
@@ -89,19 +99,22 @@ async function runChecks(): Promise<void> {
         : "ONLINE"
       : "UNKNOWN";
 
+  // Sticky maps status from OperationalMap (token presence)
   const maps: ServiceStatus =
-    prev.maps === "DEGRADED" ? "DEGRADED" : prev.maps === "UNKNOWN" ? "ONLINE" : prev.maps;
+    prev.maps === "DEGRADED" || prev.maps === "ONLINE"
+      ? prev.maps
+      : prev.maps === "UNKNOWN"
+        ? "ONLINE"
+        : prev.maps;
 
   const realtime: ServiceStatus =
-    prev.realtime === "UNKNOWN"
-      ? // No realtime signal yet — not a failure; leave unknown until hook reports
-        "UNKNOWN"
-      : prev.realtime;
+    prev.realtime === "UNKNOWN" ? "UNKNOWN" : prev.realtime;
 
   setState(
     buildHealth({
       api,
       database,
+      auth,
       groq,
       groqModel,
       predictions,
@@ -123,53 +136,82 @@ export const useSystemHealthStore = create<SystemHealthStore>((set, get) => ({
   setRealtime: (status) => {
     const prev = get();
     if (prev.realtime === status && !prev.checking) return;
-    const next = buildHealth({
-      api: prev.api,
-      database: prev.database,
-      groq: prev.groq,
-      groqModel: prev.groqModel,
-      predictions: prev.predictions,
-      maps: prev.maps,
-      realtime: status,
-      checking: prev.checking,
-    });
-    set(next);
+    set(
+      buildHealth({
+        api: prev.api,
+        database: prev.database,
+        auth: prev.auth,
+        groq: prev.groq,
+        groqModel: prev.groqModel,
+        predictions: prev.predictions,
+        maps: prev.maps,
+        realtime: status,
+        checking: prev.checking,
+      }),
+    );
   },
 
   setMaps: (status) => {
     const prev = get();
-    const next = buildHealth({
-      api: prev.api,
-      database: prev.database,
-      groq: prev.groq,
-      groqModel: prev.groqModel,
-      predictions: prev.predictions,
-      maps: status,
-      realtime: prev.realtime,
-      checking: prev.checking,
-    });
-    set(next);
+    set(
+      buildHealth({
+        api: prev.api,
+        database: prev.database,
+        auth: prev.auth,
+        groq: prev.groq,
+        groqModel: prev.groqModel,
+        predictions: prev.predictions,
+        maps: status,
+        realtime: prev.realtime,
+        checking: prev.checking,
+      }),
+    );
   },
 
   setPredictions: (status) => {
     const prev = get();
-    const next = buildHealth({
-      api: prev.api,
-      database: prev.database,
-      groq: prev.groq,
-      groqModel: prev.groqModel,
-      predictions: status,
-      maps: prev.maps,
-      realtime: prev.realtime,
-      checking: prev.checking,
-    });
-    set(next);
+    set(
+      buildHealth({
+        api: prev.api,
+        database: prev.database,
+        auth: prev.auth,
+        groq: prev.groq,
+        groqModel: prev.groqModel,
+        predictions: status,
+        maps: prev.maps,
+        realtime: prev.realtime,
+        checking: prev.checking,
+      }),
+    );
+  },
+
+  setAuth: (status) => {
+    const prev = get();
+    if (prev.auth === status && !prev.checking) return;
+    set(
+      buildHealth({
+        api: prev.api,
+        database: prev.database,
+        auth: status,
+        groq: prev.groq,
+        groqModel: prev.groqModel,
+        predictions: prev.predictions,
+        maps: prev.maps,
+        realtime: prev.realtime,
+        checking: prev.checking,
+      }),
+    );
   },
 }));
 
 /** Start shared polling once (idempotent). Pauses when tab is hidden. */
 export function startSystemHealthPolling(): void {
   if (pollTimer !== null) return;
+
+  onAuthChange((authenticated) => {
+    useSystemHealthStore.getState().setAuth(authenticated ? "ONLINE" : "REQUIRED");
+    void useSystemHealthStore.getState().refresh();
+  });
 
   void useSystemHealthStore.getState().refresh();
 

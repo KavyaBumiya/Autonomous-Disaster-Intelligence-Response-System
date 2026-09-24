@@ -54,6 +54,7 @@ export const SystemStatus: React.FC<SystemStatusProps> = ({
           health={{
             api: health.api,
             database: health.database,
+            auth: health.auth,
             groq: health.groq,
             predictions: health.predictions,
             maps: health.maps,

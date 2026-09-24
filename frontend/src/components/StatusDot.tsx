@@ -6,6 +6,7 @@ const DOT: Record<ServiceStatus, string> = {
   DEGRADED: "bg-[#f3b562] shadow-[0_0_8px_#f3b562]",
   OFFLINE: "bg-[#ff6b6b] shadow-[0_0_8px_#ff6b6b] animate-pulse",
   UNKNOWN: "bg-slate-400 animate-pulse",
+  REQUIRED: "bg-[#f3b562] shadow-[0_0_8px_#f3b562]",
 };
 
 export const StatusDot: React.FC<{ status: ServiceStatus }> = ({ status }) => (

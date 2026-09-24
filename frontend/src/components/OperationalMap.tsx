@@ -14,6 +14,15 @@ interface OperationalMapProps {
 
 const DEFAULT_CENTER: [number, number] = [73.1812, 22.3072];
 
+function hasUsableMapboxToken(): boolean {
+  const token = import.meta.env.VITE_MAPBOX_TOKEN;
+  return Boolean(
+    token &&
+      token !== "your_mapbox_access_token_here" &&
+      token.startsWith("pk."),
+  );
+}
+
 export const OperationalMap: React.FC<OperationalMapProps> = ({
   zones,
   selectedZone,
@@ -23,7 +32,7 @@ export const OperationalMap: React.FC<OperationalMapProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
-  const hasToken = Boolean(import.meta.env.VITE_MAPBOX_TOKEN && import.meta.env.VITE_MAPBOX_TOKEN !== "your_mapbox_access_token_here");
+  const hasToken = hasUsableMapboxToken();
   const mapHeight = height || "clamp(340px, 52vh, 640px)";
 
   useEffect(() => {
@@ -95,11 +104,33 @@ export const OperationalMap: React.FC<OperationalMapProps> = ({
 
   if (!hasToken) {
     return (
-      <div className="ops-map flex items-center justify-center p-8 text-center" style={{ height: mapHeight }}>
+      <div
+        className="ops-map flex items-center justify-center p-8 text-center"
+        style={{ height: mapHeight }}
+        role="status"
+      >
         <div className="max-w-md">
           <div className="ops-kicker mb-2">Map configuration required</div>
-          <div className="ops-title mb-2">Add a Mapbox public token</div>
-          <p className="text-sm leading-6 text-slate-400">Set <span className="ops-mono text-[#38d9c4]">VITE_MAPBOX_TOKEN</span> in <span className="ops-mono text-[#38d9c4]">frontend/.env</span> to enable the live geographic map. Zone data will be plotted from the backend coordinates.</p>
+          <div className="ops-title mb-2">Live geographic visualization needs a Mapbox public token</div>
+          <p className="text-sm leading-6 text-slate-400">
+            Mapbox public token is not configured for this deployment. Zone coordinates
+            still load from the backend — only the basemap is unavailable.
+          </p>
+          <div className="ops-mono mt-4 space-y-1 text-left text-xs text-slate-500">
+            <div>Deployment: Vercel</div>
+            <div>
+              Required variable:{" "}
+              <span className="text-[#38d9c4]">VITE_MAPBOX_TOKEN</span>
+            </div>
+            <div>Location: Project → Settings → Environment Variables</div>
+          </div>
+          <button
+            type="button"
+            className="ops-button ops-button-sm mt-4"
+            onClick={() => window.location.reload()}
+          >
+            Retry
+          </button>
         </div>
       </div>
     );

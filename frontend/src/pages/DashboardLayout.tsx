@@ -19,6 +19,7 @@ import {
   resourcesApi,
   commandApi,
   heatmapsApi,
+  getToken,
   type Zone,
   type Incident,
   type Resource,
@@ -220,8 +221,14 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   const effectiveHeatmapData = selectedZone ? heatmapData : null;
   const effectiveActiveHeatmap = selectedZone ? activeHeatmap : null;
 
+  const authenticated = Boolean(getToken());
+
   // Fetch zones from API with priority info
-  const { data: zoneResponse, isLoading: loadingZones, error: zonesError } = useQuery<{
+  const {
+    data: zoneResponse,
+    isLoading: loadingZones,
+    error: zonesError,
+  } = useQuery<{
     zones: Zone[];
   }>({
     queryKey: ["zones"],
@@ -229,12 +236,12 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       const res = await zonesApi.withPriority();
       return res.data;
     },
-    enabled: true,
+    enabled: authenticated,
     refetchInterval: isConnected ? 15000 : 30000,
   });
 
   const zones = useMemo(() => zoneResponse?.zones ?? [], [zoneResponse]);
-  const zonesUnavailable = !loadingZones && zones.length === 0;
+  const zonesUnavailable = authenticated && !loadingZones && !zonesError && zones.length === 0;
   const apiBase = (import.meta.env.VITE_API_BASE_URL || "/").replace(/\/$/, "");
   const isVercelHost =
     typeof window !== "undefined" &&
@@ -245,51 +252,103 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       apiBase === "/" ||
       apiBase.includes("localhost") ||
       apiBase.includes("127.0.0.1"));
-  const zoneErrorMessage = axios.isAxiosError(zonesError)
-    ? zonesError.response?.status === 401
-      ? "Sign in with an operator account to load live zones."
-      : isLocalBackend
-        ? "Backend API is offline. Start Docker Desktop and run docker compose up."
-        : `Backend API is unreachable at ${apiBase || window.location.origin}. Check VITE_API_BASE_URL and that the API is running.`
-    : zonesError
-      ? "Could not reach the backend API. It may still be starting — retry shortly."
-      : "No live zones returned from the backend.";
+  const zoneErrorMessage = !authenticated
+    ? "Sign in with an operator account to load live zones."
+    : axios.isAxiosError(zonesError)
+      ? zonesError.response?.status === 401
+        ? "Sign in with an operator account to load live zones."
+        : isLocalBackend
+          ? "Backend API is offline. Start Docker Desktop and run docker compose up."
+          : `Backend API is unreachable at ${apiBase || window.location.origin}. Check VITE_API_BASE_URL and that the API is running.`
+      : zonesError
+        ? "Could not reach the backend API. It may still be starting — retry shortly."
+        : "No live zones returned from the backend.";
+
+  type QueryLike<T> = {
+    data?: T;
+    isLoading: boolean;
+    error: unknown;
+  };
+
+  function kpiDisplay<T>(
+    q: QueryLike<T>,
+    render: (data: T) => React.ReactNode,
+  ): { value: React.ReactNode; detail?: React.ReactNode; tone?: KPIItemTone } {
+    if (!authenticated) {
+      return {
+        value: "Sign in required",
+        detail: "Live data loads after operator login",
+        tone: "amber",
+      };
+    }
+    if (q.isLoading) {
+      return { value: "…", detail: "Loading…", tone: "default" };
+    }
+    if (q.error) {
+      const status = axios.isAxiosError(q.error)
+        ? q.error.response?.status
+        : undefined;
+      if (status === 401) {
+        return {
+          value: "Sign in required",
+          detail: "Authentication required",
+          tone: "amber",
+        };
+      }
+      if (status === 403) {
+        return {
+          value: "—",
+          detail: "Insufficient permissions",
+          tone: "amber",
+        };
+      }
+      return {
+        value: "—",
+        detail: "Unable to load — retry shortly",
+        tone: "red",
+      };
+    }
+    if (q.data === undefined) {
+      return { value: "—", detail: "No response yet", tone: "default" };
+    }
+    return { value: render(q.data), tone: "default" };
+  }
+
+  type KPIItemTone = NonNullable<import("@/components/KPIStrip").KPIItem["tone"]>;
 
   // Live stats — derived from backend queries (not hardcoded)
-  const { data: incidentsData } = useQuery<{ incidents: Incident[]; total: number }>({
+  const incidentsQuery = useQuery<{ incidents: Incident[]; total: number }>({
     queryKey: ["incidents", "active"],
     queryFn: async () => {
       const res = await incidentsApi.list({ active_only: true, limit: 200 });
       return res.data;
     },
+    enabled: authenticated,
     refetchInterval: isConnected ? 15000 : 30000,
   });
 
-  const { data: resourcesData } = useQuery<{ resources: Resource[]; total: number }>({
+  const resourcesQuery = useQuery<{ resources: Resource[]; total: number }>({
     queryKey: ["resources", "all"],
     queryFn: async () => {
       const res = await resourcesApi.list({});
       return res.data;
     },
+    enabled: authenticated,
     refetchInterval: isConnected ? 15000 : 30000,
   });
 
-  const { data: queueData } = useQuery({
+  const queueQuery = useQuery({
     queryKey: ["approval-queue"],
     queryFn: async () => {
       const res = await commandApi.approvalQueue();
       return res.data;
     },
+    enabled: authenticated,
     refetchInterval: 15000,
   });
 
-  const activeIncidents = incidentsData?.incidents ?? [];
-  const activeIncidentCount = activeIncidents.length;
-  const peopleAtRisk = activeIncidents.reduce(
-    (sum, inc) => sum + (inc.victim_count || 0),
-    0,
-  );
-  const pendingApprovals = queueData?.pending_count ?? 0;
+  const resourcesData = resourcesQuery.data;
+  const queueData = queueQuery.data;
 
   const resources = resourcesData?.resources ?? [];
   const availableResources = resources.filter(
@@ -362,32 +421,74 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
       <KPIStrip
         items={[
-          {
-            label: "Active incidents",
-            value: String(activeIncidentCount).padStart(2, "0"),
-            detail: (
-              <span className="text-[#ff6b6b]">
-                {activeIncidents.filter((i) => (i.priority_score || 0) > 70).length} need attention
-              </span>
-            ),
-          },
-          {
-            label: "People at risk",
-            value: peopleAtRisk.toLocaleString(),
-            detail: <span className="text-[#f3b562]">Detected across active zones</span>,
-          },
-          {
-            label: "Response readiness",
-            value: `${readiness}%`,
-            tone: "cyan",
-            progress: readiness,
-          },
-          {
-            label: "Actions awaiting approval",
-            value: String(pendingApprovals).padStart(2, "0"),
-            tone: "amber",
-            detail: "Commander review required",
-          },
+          (() => {
+            const k = kpiDisplay(incidentsQuery, (d) =>
+              String(d.incidents.length).padStart(2, "0"),
+            );
+            return {
+              label: "Active incidents",
+              value: k.value,
+              detail:
+                authenticated && incidentsQuery.data
+                  ? `${
+                      incidentsQuery.data.incidents.filter((i) => (i.priority_score || 0) > 70)
+                        .length
+                    } need attention`
+                  : k.detail,
+              tone: k.tone === "default" ? "red" : k.tone,
+            };
+          })(),
+          (() => {
+            const k = kpiDisplay(incidentsQuery, (d) =>
+              d.incidents
+                .reduce((sum, inc) => sum + (inc.victim_count || 0), 0)
+                .toLocaleString(),
+            );
+            return {
+              label: "People at risk",
+              value: k.value,
+              detail:
+                authenticated && incidentsQuery.data
+                  ? "Detected across active zones"
+                  : k.detail,
+              tone: k.tone === "default" ? "amber" : k.tone,
+            };
+          })(),
+          (() => {
+            const k = kpiDisplay(resourcesQuery, (d) => {
+              const list = d.resources ?? [];
+              if (list.length === 0) return "—";
+              const avail = list.filter(
+                (r) => r.available && r.current_load < r.capacity,
+              ).length;
+              return `${Math.round((avail / list.length) * 100)}%`;
+            });
+            const showProgress =
+              authenticated && !resourcesQuery.isLoading && !resourcesQuery.error && resources.length > 0;
+            return {
+              label: "Response readiness",
+              value: k.value,
+              detail: k.detail,
+              tone: (k.tone === "default" ? "cyan" : k.tone) as KPIItemTone,
+              progress: showProgress ? readiness : undefined,
+            };
+          })(),
+          (() => {
+            const k = kpiDisplay(queueQuery, (d) =>
+              String(d.pending_count ?? 0).padStart(2, "0"),
+            );
+            return {
+              label: "Actions awaiting approval",
+              value: k.value,
+              detail:
+                authenticated && queueQuery.data
+                  ? queueQuery.data.pending_count === 0
+                    ? "Queue is clear"
+                    : "Commander review required"
+                  : k.detail,
+              tone: (k.tone === "default" ? "amber" : k.tone) as KPIItemTone,
+            };
+          })(),
         ]}
       />
 
@@ -411,7 +512,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
               navigate(`/dashboard/${zoneId || ""}`, { replace: true });
             }}
             className="ops-select min-w-[250px]"
-            disabled={loadingZones || zonesUnavailable}
+            disabled={!authenticated || loadingZones || zonesUnavailable}
           >
             <option value="">All operational zones</option>
             {zones.map((zone) => (
@@ -488,34 +589,47 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
               </div>
             </div>
             <div className="ops-panel-body space-y-3">
-              {(queueData?.actions ?? []).slice(0, 3).map((action) => (
-                <button
-                  key={action.action_id}
-                  className="flex w-full items-center gap-3 rounded-lg border border-white/10 bg-white/[.03] p-3 text-left transition hover:border-[#38d9c4]/50"
-                  onClick={() => navigate("/command")}
-                >
-                  <span
-                    className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold ${
-                      (action.priority_score || 0) > 70
-                        ? "bg-[#ff6b6b]/20 text-[#ff8b8b]"
-                        : "bg-[#f3b562]/20 text-[#f3b562]"
-                    }`}
+              {!authenticated ? (
+                <p className="text-xs text-slate-500">
+                  Sign in to load the approval queue.
+                </p>
+              ) : queueQuery.isLoading ? (
+                <p className="text-xs text-slate-500">Loading approval queue…</p>
+              ) : queueQuery.error ? (
+                <p className="text-xs text-[#ff6b6b]">Unable to load approval queue.</p>
+              ) : (
+                (queueData?.actions ?? []).slice(0, 3).map((action) => (
+                  <button
+                    key={action.action_id}
+                    className="flex w-full items-center gap-3 rounded-lg border border-white/10 bg-white/[.03] p-3 text-left transition hover:border-[#38d9c4]/50"
+                    onClick={() => navigate("/command")}
                   >
-                    {action.priority_band?.charAt(0) || "!"}
-                  </span>
-                  <span className="min-w-0 flex-1 text-sm text-slate-200">
-                    <span className="ops-clamp-2 block">
-                      {action.description?.slice(0, 60) || action.action_type}
+                    <span
+                      className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold ${
+                        (action.priority_score || 0) > 70
+                          ? "bg-[#ff6b6b]/20 text-[#ff8b8b]"
+                          : "bg-[#f3b562]/20 text-[#f3b562]"
+                      }`}
+                    >
+                      {action.priority_band?.charAt(0) || "!"}
                     </span>
-                    <small className="mt-1 block text-xs text-slate-500">
-                      Priority {(action.priority_score || 0).toFixed(0)}/100 · pending
-                    </small>
-                  </span>
-                </button>
-              ))}
-              {(queueData?.actions ?? []).length === 0 && (
-                <p className="text-xs text-slate-500">No pending actions — queue is clear.</p>
+                    <span className="min-w-0 flex-1 text-sm text-slate-200">
+                      <span className="ops-clamp-2 block">
+                        {action.description?.slice(0, 60) || action.action_type}
+                      </span>
+                      <small className="mt-1 block text-xs text-slate-500">
+                        Priority {(action.priority_score || 0).toFixed(0)}/100 · pending
+                      </small>
+                    </span>
+                  </button>
+                ))
               )}
+              {authenticated &&
+                !queueQuery.isLoading &&
+                !queueQuery.error &&
+                (queueData?.actions ?? []).length === 0 && (
+                  <p className="text-xs text-slate-500">No pending actions — queue is clear.</p>
+                )}
               <Button variant="primary" block onClick={() => navigate("/command")}>
                 Review queue
               </Button>

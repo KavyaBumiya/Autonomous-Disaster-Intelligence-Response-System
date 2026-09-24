@@ -7,6 +7,7 @@ const TEXT: Record<ServiceStatus, string> = {
   DEGRADED: "text-[#f3b562]",
   OFFLINE: "text-[#ff6b6b]",
   UNKNOWN: "text-slate-400",
+  REQUIRED: "text-[#f3b562]",
 };
 
 const BORDER: Record<ServiceStatus, string> = {
@@ -14,6 +15,7 @@ const BORDER: Record<ServiceStatus, string> = {
   DEGRADED: "border-[#f3b562]/30 bg-[#f3b562]/10",
   OFFLINE: "border-[#ff6b6b]/30 bg-[#ff6b6b]/10",
   UNKNOWN: "border-white/15 bg-white/5",
+  REQUIRED: "border-[#f3b562]/30 bg-[#f3b562]/10",
 };
 
 export interface SystemStatusBadgeProps {

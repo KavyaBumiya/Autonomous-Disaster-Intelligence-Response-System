@@ -2,6 +2,7 @@ import React from "react";
 import {
   SERVICE_LABELS,
   overallLabel,
+  serviceLabel,
   type ServiceKey,
   type ServiceStatus,
   type SystemHealth,
@@ -10,11 +11,19 @@ import { StatusDot } from "./StatusDot";
 
 const ROW_KEYS: ServiceKey[] = [
   "api",
+  "auth",
   "groq",
   "predictions",
   "maps",
   "realtime",
 ];
+
+function statusTextClass(status: ServiceStatus): string {
+  if (status === "ONLINE") return "text-[#38d9c4]";
+  if (status === "DEGRADED" || status === "REQUIRED") return "text-[#f3b562]";
+  if (status === "OFFLINE") return "text-[#ff6b6b]";
+  return "text-slate-400";
+}
 
 function formatTime(iso?: string): string {
   if (!iso) return "—";
@@ -38,7 +47,7 @@ export const SystemStatusPopover: React.FC<SystemStatusPopoverProps> = ({
 }) => {
   const overallLabelText = overallLabel(health.overall);
   const reasonText =
-    health.reasons[0] ||
+    health.reasons.join(" ") ||
     (health.overall === "ONLINE"
       ? "All core services operational."
       : health.overall === "OFFLINE"
@@ -74,9 +83,11 @@ export const SystemStatusPopover: React.FC<SystemStatusPopoverProps> = ({
                 <span className="text-xs font-medium text-slate-200">
                   {SERVICE_LABELS[key]}
                 </span>
-                <span className={`inline-flex items-center gap-1.5 text-xs ${status === "ONLINE" ? "text-[#38d9c4]" : status === "DEGRADED" ? "text-[#f3b562]" : status === "OFFLINE" ? "text-[#ff6b6b]" : "text-slate-400"}`}>
+                <span
+                  className={`inline-flex items-center gap-1.5 text-xs ${statusTextClass(status)}`}
+                >
                   <StatusDot status={status} />
-                  {overallLabel(status)}
+                  {serviceLabel(key, status)}
                 </span>
               </div>
             );

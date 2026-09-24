@@ -12,6 +12,7 @@ import {
 const allOnline = {
   api: "ONLINE" as const,
   database: "ONLINE" as const,
+  auth: "ONLINE" as const,
   groq: "ONLINE" as const,
   predictions: "ONLINE" as const,
   maps: "ONLINE" as const,
@@ -102,6 +103,19 @@ describe("calculateOverallHealth", () => {
       }),
     ).toBe("UNKNOWN");
   });
+
+  it("auth REQUIRED alone does not OFFLINE; with maps config → DEGRADED", () => {
+    expect(
+      calculateOverallHealth({ ...allOnline, auth: "REQUIRED" }),
+    ).toBe("ONLINE");
+    expect(
+      calculateOverallHealth({
+        ...allOnline,
+        auth: "REQUIRED",
+        maps: "DEGRADED",
+      }),
+    ).toBe("DEGRADED");
+  });
 });
 
 describe("getHealthReasons", () => {
@@ -122,5 +136,16 @@ describe("getHealthReasons", () => {
       overall: "OFFLINE",
     });
     expect(reasons[0]).toMatch(/unreachable/i);
+  });
+
+  it("map config and auth reasons when applicable", () => {
+    const reasons = getHealthReasons({
+      ...allOnline,
+      maps: "DEGRADED",
+      auth: "REQUIRED",
+      overall: "DEGRADED",
+    });
+    expect(reasons.join(" ")).toMatch(/Mapbox public token/i);
+    expect(reasons.join(" ")).toMatch(/authentication required/i);
   });
 });

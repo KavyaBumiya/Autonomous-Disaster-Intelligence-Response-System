@@ -9,27 +9,30 @@ import "./index.css";
 
 const queryClient = new QueryClient();
 
-// Bootstrap JWT before the first data fetch (best-effort; fails open to login prompt on backend offline)
-void ensureAuth();
+async function bootstrap() {
+  // Await JWT before first paint so protected queries do not race as 401
+  await ensureAuth();
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <BrowserRouter>
+        <QueryClientProvider client={queryClient}>
+          <App />
+          <Toaster
+            theme="dark"
+            position="top-right"
+            toastOptions={{
+              style: {
+                background: "#102238",
+                border: "1px solid rgba(151,171,199,0.15)",
+                color: "#e8edf5",
+              },
+            }}
+          />
+        </QueryClientProvider>
+      </BrowserRouter>
+    </React.StrictMode>
+  );
+}
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <QueryClientProvider client={queryClient}>
-        <App />
-        <Toaster
-          theme="dark"
-          position="top-right"
-          toastOptions={{
-            style: {
-              background: "#102238",
-              border: "1px solid rgba(151,171,199,0.15)",
-              color: "#e8edf5",
-            },
-          }}
-        />
-      </QueryClientProvider>
-    </BrowserRouter>
-  </React.StrictMode>
-);
+void bootstrap();
 
