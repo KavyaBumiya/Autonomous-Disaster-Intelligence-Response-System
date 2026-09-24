@@ -12,12 +12,13 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy import text
-import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://aegisai:aegisai_secret@localhost:5432/aegisai")
 
-engine = create_async_engine(DATABASE_URL, echo=False)
-AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
+def _engine_and_session():
+    from app.core.config import get_settings
+    url = get_settings().database_url
+    engine = create_async_engine(url, echo=False)
+    return engine, async_sessionmaker(bind=engine, expire_on_commit=False)
 
 
 async def seed_users(db: AsyncSession) -> None:
@@ -133,7 +134,8 @@ async def reset(db: AsyncSession) -> None:
 
 async def main() -> None:
     do_reset = "--reset" in sys.argv
-    async with AsyncSessionLocal() as db:
+    _, session_factory = _engine_and_session()
+    async with session_factory() as db:
         if do_reset:
             print("Resetting database...")
             await reset(db)

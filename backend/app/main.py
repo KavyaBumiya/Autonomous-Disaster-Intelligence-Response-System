@@ -4,25 +4,69 @@ AegisAI — Phase 1 FastAPI application.
 Mounts Socket.IO alongside the REST API via ASGI middleware.
 Starts background pollers (weather, seismic, social) on startup.
 """
+import asyncio
+import importlib
 import socketio
 import structlog
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from app.core.config import get_settings
+from app.core.database import AsyncSessionLocal, Base, engine
 from app.services.websocket import sio
 from app.pollers.scheduler import start_scheduler, stop_scheduler
 from app.api import reports, incidents, zones, actions, auth, resources, predictions, command, phase2, heatmaps, routes
-from app.core.database import AsyncSessionLocal
-import importlib
-from sqlalchemy import text
 
 logger = structlog.get_logger()
 settings = get_settings()
+
+
+def _run_alembic_upgrade() -> None:
+    """Apply migrations synchronously (used via asyncio.to_thread)."""
+    from alembic import command
+    from alembic.config import Config
+
+    backend_root = Path(__file__).resolve().parents[1]
+    cfg = Config(str(backend_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_root / "alembic"))
+    command.upgrade(cfg, "head")
+
+
+async def _ensure_schema() -> None:
+    """Migrate DB (or create tables) then seed demo users if missing."""
+    import app.models  # noqa: F401 — register models for create_all
+
+    try:
+        await asyncio.to_thread(_run_alembic_upgrade)
+        logger.info("Alembic migrations applied")
+    except Exception as exc:
+        logger.warning("Alembic failed — falling back to create_all", error=str(exc))
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Schema created via metadata.create_all")
+
+    try:
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(text("SELECT 1 FROM users LIMIT 1"))
+            row = res.first()
+            if not row:
+                logger.info("Users table empty — running demo seeder")
+                seed = importlib.import_module("seed")
+                await seed.seed_users(db)
+                if settings.mapbox_access_token:
+                    await seed.seed_fixtures(db)
+                await db.commit()
+                logger.info("Demo seed complete")
+            else:
+                logger.info("Users already present — skip seed")
+    except Exception as exc:
+        logger.error("Seed failed", error=str(exc))
 
 
 @asynccontextmanager
@@ -34,29 +78,11 @@ async def lifespan(app: FastAPI):
     except RuntimeError as exc:
         logger.error("Database not configured", error=str(exc))
         raise
-    await start_scheduler()
-    # Auto-seed demo users/fixtures when DB is empty (API keys optional).
     try:
-        async with AsyncSessionLocal() as db:
-            res = await db.execute(text("SELECT 1 FROM users LIMIT 1"))
-            row = res.first()
-            if not row:
-                logger.info("Users table empty — running demo seeder")
-                try:
-                    seed = importlib.import_module("seed")
-                    await seed.seed_users(db)
-                    if settings.mapbox_access_token:
-                        await seed.seed_fixtures(db)
-                    await db.commit()
-                    logger.info("Demo seed complete")
-                except Exception as e:
-                    logger.exception("Seeder failed", error=str(e))
+        await _ensure_schema()
     except Exception as exc:
-        logger.error(
-            "Auto-seed skipped — cannot reach database",
-            error=str(exc),
-            database_host=settings.database_url.split("@")[-1].split("/")[0],
-        )
+        logger.error("Schema/seed bootstrap failed", error=str(exc))
+    await start_scheduler()
     yield
     await stop_scheduler()
     logger.info("AegisAI backend shut down")
