@@ -31,11 +31,17 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
         result = await db.execute(select(User).where(User.username == body.username))
         user = result.scalar_one_or_none()
-    except Exception:
+    except Exception as exc:
         # Surface DB/schema problems as 503 rather than a bare 500
+        import structlog
+        structlog.get_logger().error(
+            "Login DB query failed",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Auth database unavailable. Ensure migrations ran and DATABASE_URL is set.",
+            detail=f"Auth database error: {type(exc).__name__}",
         )
 
     if not user or not user.password_hash:

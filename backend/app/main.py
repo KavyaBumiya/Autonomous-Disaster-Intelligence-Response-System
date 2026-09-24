@@ -41,15 +41,28 @@ def _run_alembic_upgrade() -> None:
 async def _ensure_schema() -> None:
     """Migrate DB (or create tables) then seed demo users if missing."""
     import app.models  # noqa: F401 — register models for create_all
+    from app.models.user import User
+
+    # Always ensure `users` first so auth works even if PostGIS migrations fail.
+    async with engine.begin() as conn:
+        await conn.run_sync(lambda c: User.__table__.create(c, checkfirst=True))
+    logger.info("users table ready")
 
     try:
         await asyncio.to_thread(_run_alembic_upgrade)
         logger.info("Alembic migrations applied")
     except Exception as exc:
         logger.warning("Alembic failed — falling back to create_all", error=str(exc))
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("Schema created via metadata.create_all")
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("Schema created via metadata.create_all")
+        except Exception as exc2:
+            logger.warning("create_all failed (PostGIS?) — users table still ensured", error=str(exc2))
+
+    # Re-ensure users if a partial migration rolled anything back
+    async with engine.begin() as conn:
+        await conn.run_sync(lambda c: User.__table__.create(c, checkfirst=True))
 
     try:
         async with AsyncSessionLocal() as db:
@@ -60,13 +73,16 @@ async def _ensure_schema() -> None:
                 seed = importlib.import_module("seed")
                 await seed.seed_users(db)
                 if settings.mapbox_access_token:
-                    await seed.seed_fixtures(db)
+                    try:
+                        await seed.seed_fixtures(db)
+                    except Exception as exc:
+                        logger.warning("Fixture seed skipped", error=str(exc))
                 await db.commit()
                 logger.info("Demo seed complete")
             else:
                 logger.info("Users already present — skip seed")
     except Exception as exc:
-        logger.error("Seed failed", error=str(exc))
+        logger.error("Seed failed", error=str(exc), error_type=type(exc).__name__)
 
 
 @asynccontextmanager
