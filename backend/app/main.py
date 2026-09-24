@@ -27,15 +27,25 @@ logger = structlog.get_logger()
 settings = get_settings()
 
 
-def _run_alembic_upgrade() -> None:
-    """Apply migrations synchronously (used via asyncio.to_thread)."""
-    from alembic import command
+def _alembic_config():
     from alembic.config import Config
 
     backend_root = Path(__file__).resolve().parents[1]
     cfg = Config(str(backend_root / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend_root / "alembic"))
-    command.upgrade(cfg, "head")
+    return cfg
+
+
+def _run_alembic_upgrade() -> None:
+    """Apply migrations synchronously (used via asyncio.to_thread)."""
+    from alembic import command
+    command.upgrade(_alembic_config(), "head")
+
+
+def _stamp_alembic_head() -> None:
+    """Mark DB as at head so next boot does not re-run 0001 on existing tables."""
+    from alembic import command
+    command.stamp(_alembic_config(), "head")
 
 
 async def _ensure_schema() -> None:
@@ -56,17 +66,19 @@ async def _ensure_schema() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("metadata.create_all complete")
+        # Tables already match models — stamp head so alembic does not re-create them
+        await asyncio.to_thread(_stamp_alembic_head)
+        logger.info("Alembic stamped at head")
     except Exception as exc:
-        logger.error("create_all failed", error=str(exc), error_type=type(exc).__name__)
+        logger.error("create_all/stamp failed", error=str(exc), error_type=type(exc).__name__)
         async with engine.begin() as conn:
             await conn.run_sync(lambda c: User.__table__.create(c, checkfirst=True))
-
-    # Try alembic for any migrations that add columns not on models (best-effort)
-    try:
-        await asyncio.to_thread(_run_alembic_upgrade)
-        logger.info("Alembic migrations applied")
-    except Exception as exc:
-        logger.warning("Alembic skipped/failed (often OK if create_all ran)", error=str(exc))
+        # Fresh DB without full schema: try real migrations
+        try:
+            await asyncio.to_thread(_run_alembic_upgrade)
+            logger.info("Alembic migrations applied")
+        except Exception as exc2:
+            logger.warning("Alembic failed after partial create_all", error=str(exc2))
 
     # Re-ensure users
     async with engine.begin() as conn:
