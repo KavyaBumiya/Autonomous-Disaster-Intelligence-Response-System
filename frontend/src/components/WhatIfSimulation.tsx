@@ -1,7 +1,6 @@
 import React, { useState, useCallback } from "react";
-import axios from "axios";
 import { toast } from "sonner";
-import { apiErrorMessage } from "@/services/api";
+import { predictionsApi, apiErrorMessage } from "@/services/api";
 
 interface WhatIfSimulationProps {
   zoneId: string;
@@ -35,9 +34,9 @@ export const WhatIfSimulation: React.FC<WhatIfSimulationProps> = ({
   const runSimulation = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await axios.post("/api/predictions/what-if", {
+      const res = await predictionsApi.whatIf({
         zone_id: zoneId,
-        disaster_type: disasterType,
+        disaster_type: showFireTab ? "fire" : disasterType,
         rainfall_mm_hr: rainfall,
         wind_speed_kmh: windSpeed,
         resource_delta: resourceDelta,
@@ -49,7 +48,7 @@ export const WhatIfSimulation: React.FC<WhatIfSimulationProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [zoneId, rainfall, windSpeed, resourceDelta, disasterType]);
+  }, [zoneId, rainfall, windSpeed, resourceDelta, disasterType, showFireTab]);
 
   return (
     <div className="card p-6 max-w-2xl mx-auto">
@@ -150,7 +149,7 @@ export const WhatIfSimulation: React.FC<WhatIfSimulationProps> = ({
       {simulationResult && (
         <div className="mt-6 p-4 bg-gray-800/50 rounded-lg">
           <h3 className="font-medium text-white mb-3">
-            Results — {simulationResult.disaster_type.toUpperCase()}
+            Results — {simulationResult.disaster_type?.toUpperCase()}
           </h3>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>

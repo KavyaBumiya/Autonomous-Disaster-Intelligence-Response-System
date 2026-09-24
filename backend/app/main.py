@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import get_settings
 from app.services.websocket import sio
 from app.pollers.scheduler import start_scheduler, stop_scheduler
-from app.api import reports, incidents, zones, actions, auth, resources, predictions, command, phase2, heatmaps
+from app.api import reports, incidents, zones, actions, auth, resources, predictions, command, phase2, heatmaps, routes
 from app.core.database import AsyncSessionLocal
 import importlib
 from sqlalchemy import text
@@ -68,13 +68,14 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in production
+    # FRONTEND_ORIGIN env (comma-separated). Empty = ["*"] for local demo.
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Root path & favicon � prevent 404 on / and /favicon.ico
+# Root path & favicon — prevent 404 on / and /favicon.ico
 @app.get("/", include_in_schema=False)
 async def root():
     """Redirect root to API health check for frontend compatibility."""
@@ -84,6 +85,20 @@ async def root():
 async def favicon():
     """Return no-content for favicon to prevent 404 console spam."""
     return Response(status_code=204)
+
+
+# ── API root metadata (GET /api) ─────────────────────────────
+@app.get("/api", tags=["root"])
+async def api_root():
+    """API discovery endpoint — JSON metadata, not Swagger UI."""
+    return {
+        "name": "AegisAI API",
+        "description": "AI-powered disaster intelligence & response platform",
+        "version": "1.0.0",
+        "status": "operational",
+        "docs": "/docs",
+        "health": "/api/health",
+    }
 
 
 # ── Static files (audio uploads) ─────────────────────────────
@@ -97,6 +112,7 @@ app.include_router(zones.router,       prefix="/api/zones",       tags=["zones"]
 app.include_router(actions.router,     prefix="/api/actions",     tags=["actions"])
 app.include_router(resources.router,   prefix="/api/resources",   tags=["resources"])
 app.include_router(predictions.router, prefix="/api/predictions", tags=["predictions"])
+app.include_router(routes.router,      prefix="/api/routes",      tags=["routes"])
 app.include_router(command.router,     tags=["command center"])  # prefix already set on router
 app.include_router(phase2.router,      tags=["phase 2 intelligence"])
 app.include_router(heatmaps.router,    tags=["heatmaps"])

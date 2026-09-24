@@ -1,17 +1,10 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
-import axios from "axios";
+
+import { reportsApi, type Report } from "@/services/api";
 
 interface RecentReportsPanelProps {
   selectedZone: string | null;
-}
-
-interface Report {
-  report_id: string;
-  message_text?: string;
-  transcript?: string;
-  source?: string;
-  disaster_type?: string;
 }
 
 export const RecentReportsPanel: React.FC<RecentReportsPanelProps> = ({
@@ -20,13 +13,13 @@ export const RecentReportsPanel: React.FC<RecentReportsPanelProps> = ({
   const { data: reports = [], isLoading } = useQuery<Report[]>({
     queryKey: ["reports", selectedZone],
     queryFn: async () => {
-      const url = selectedZone
-        ? `/api/reports?zone_id=${selectedZone}`
-        : "/api/reports";
-      const res = await axios.get(url);
+      const res = await reportsApi.list({
+        ...(selectedZone ? { zone_id: selectedZone } : {}),
+        limit: 20,
+      });
       return res.data.reports || [];
     },
-    enabled: !!selectedZone,
+    refetchInterval: 30000,
   });
 
   return (
@@ -39,14 +32,18 @@ export const RecentReportsPanel: React.FC<RecentReportsPanelProps> = ({
       ) : (
         <div className="space-y-2 text-xs text-gray-300">
           {reports.map((r) => {
-            const preview = r.message_text || r.transcript || "";
+            const key = r.report_id ?? r.id ?? `${r.created_at ?? ""}`;
+            const preview =
+              r.summary || r.message_text || r.transcript || r.excerpt || "";
             return (
-              <div key={r.report_id} className="p-2 bg-gray-700/50 rounded">
+              <div key={key} className="p-2 bg-gray-700/50 rounded">
                 <div className="font-medium text-white truncate" title={preview}>
-                  {preview.substring(0, 50)}
+                  {preview.substring(0, 50) || "(empty report)"}
                 </div>
                 <div className="text-xs">
                   {r.source || "unknown"} • {r.disaster_type || "unknown"}
+                  {r.trust_score != null && ` • trust ${r.trust_score.toFixed(2)}`}
+                  {r.suppressed && " • suppressed"}
                 </div>
               </div>
             );

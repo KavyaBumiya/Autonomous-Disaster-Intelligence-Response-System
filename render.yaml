@@ -52,6 +52,12 @@ services:
         sync: false
       - key: TWITTER_BEARER_TOKEN
         sync: false
+      # Browser origin for CORS (set to your frontend URL in production).
+      # Leave empty to allow all origins (not recommended for prod).
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: APP_ENV
+        value: production
 
   # ── Redis Key-Value Store ─────────────────────────────────────────
   - type: keyvalue

@@ -74,7 +74,26 @@ docker-compose up --build
 | Service   | URL                        |
 |-----------|---------------------------|
 | Frontend  | http://localhost:3000      |
+| API root  | http://localhost:8000/api  |
 | API docs  | http://localhost:8000/docs |
+| Health    | http://localhost:8000/api/health |
+
+### API surface
+
+| Path | Purpose |
+|------|---------|
+| `/api` | JSON API metadata (name, version, docs, health links) |
+| `/docs` | Swagger UI |
+| `/openapi.json` | OpenAPI specification |
+| `/api/health` | Health check `{"status":"ok","version":"1.0.0"}` |
+
+**Production (Render):**
+
+| Path | URL |
+|------|-----|
+| API root | `https://autonomous-disaster-intelligence.onrender.com/api` |
+| Swagger | `https://autonomous-disaster-intelligence.onrender.com/docs` |
+| Health | `https://autonomous-disaster-intelligence.onrender.com/api/health` |
 
 ---
 

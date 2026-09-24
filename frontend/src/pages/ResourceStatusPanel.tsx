@@ -1,25 +1,18 @@
 import React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import axios from "axios";
 import { toast } from "sonner";
+
+import {
+  resourcesApi,
+  incidentsApi,
+  apiErrorMessage,
+  type Resource,
+} from "@/services/api";
 
 interface ResourcePanelProps {
   zoneId?: string | null;
   incidentId?: string | null;
   showShelterView?: boolean;
-}
-
-interface Resource {
-  resource_id: string;
-  name?: string;
-  resource_type?: string;
-  available?: boolean;
-  current_load?: number;
-  capacity?: number;
-}
-
-interface ResourcesResponse {
-  resources?: Resource[];
 }
 
 export const ResourcePanel: React.FC<ResourcePanelProps> = ({
@@ -33,26 +26,12 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
     isLoading,
     isError,
   } = useQuery<Resource[]>({
-    queryKey: ["resources", zoneId, incidentId],
+    queryKey: ["resources", zoneId],
     queryFn: async () => {
-      const params: Record<string, string> = {};
-
-      if (zoneId) {
-        params.zone_id = zoneId;
-      }
-
-      if (incidentId) {
-        params.incident_id = incidentId;
-      }
-
-      const response = await axios.get<ResourcesResponse>(
-        "/api/resources",
-        { params }
+      const response = await resourcesApi.list(
+        zoneId ? { zone_id: zoneId } : {},
       );
-
-      return Array.isArray(response.data.resources)
-        ? response.data.resources
-        : [];
+      return response.data.resources || [];
     },
   });
 
@@ -63,94 +42,69 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
   );
 
   const assignedResources = resources.filter(
-    (resource) => resource.available !== true
+    (resource) => resource.available !== true || (resource.assigned_zone_id ?? null) !== null
   );
 
   const handleAssign = async (resourceId: string) => {
     if (!zoneId && !incidentId) {
-      toast.error(
-        "Select a zone or incident before assigning a resource."
-      );
+      toast.error("Select a zone or incident before assigning a resource.");
       return;
     }
 
     try {
-      const targetId = incidentId || zoneId;
+      let targetIncidentId = incidentId;
 
-      const response = await axios.post(
-        `/api/incidents/${targetId}/assign-resources`,
-        {},
-        {
-          params: {
-            resource_id: resourceId,
-          },
-        }
-      );
-
-      toast.success(
-        response.data?.message || "Resource assigned successfully"
-      );
-
-      await queryClient.invalidateQueries({
-        queryKey: ["resources"],
-      });
-    } catch (error: unknown) {
-      let message = "Failed to assign resource";
-
-      if (axios.isAxiosError(error)) {
-        message =
-          error.response?.data?.detail ||
-          error.response?.data?.message ||
-          error.message ||
-          message;
+      // Resolve a concrete incident for the zone if only a zone is selected
+      if (!targetIncidentId && zoneId) {
+        const incRes = await incidentsApi.list({
+          zone_id: zoneId,
+          active_only: true,
+          limit: 1,
+        });
+        targetIncidentId = incRes.data.incidents?.[0]?.incident_id ?? null;
       }
 
-      toast.error(message);
+      if (!targetIncidentId) {
+        toast.error("No active incident found for this zone.");
+        return;
+      }
+
+      // Backend runs the resource-commander allocation for the incident
+      const response = await resourcesApi.assign(targetIncidentId);
+      toast.success(
+        response.data?.message || "Resource allocation complete"
+      );
+
+      await queryClient.invalidateQueries({ queryKey: ["resources"] });
+      await queryClient.invalidateQueries({ queryKey: ["incidents"] });
+      void resourceId;
+    } catch (error: unknown) {
+      toast.error(apiErrorMessage(error) || "Failed to assign resource");
     }
   };
 
   const handleRelease = async (resourceId: string) => {
     try {
-      const response = await axios.put(
-        `/api/resources/${resourceId}`,
-        {
-          available: true,
-          current_load: 0,
-        }
-      );
+      const response = await resourcesApi.update(resourceId, {
+        available: true,
+        current_load: 0,
+      });
 
       toast.success(
         response.data?.message || "Resource released successfully"
       );
 
-      await queryClient.invalidateQueries({
-        queryKey: ["resources"],
-      });
+      await queryClient.invalidateQueries({ queryKey: ["resources"] });
     } catch (error: unknown) {
-      let message = "Failed to release resource";
-
-      if (axios.isAxiosError(error)) {
-        message =
-          error.response?.data?.detail ||
-          error.response?.data?.message ||
-          error.message ||
-          message;
-      }
-
-      toast.error(message);
+      toast.error(apiErrorMessage(error) || "Failed to release resource");
     }
   };
 
   if (isLoading) {
     return (
       <div className="p-4 bg-gray-800/50 rounded-lg h-fit">
-        <h3 className="font-medium text-white mb-3">
-          Resource Commander
-        </h3>
-
-        <p className="text-sm text-gray-400">
-          Loading resources...
-        </p>
+        <h3 className="font-medium text-white mb-3">Resource Commander</h3>
+        <p className="text-sm text-gray-400">Loading resources...</p>
       </div>
     );
   }
@@ -158,13 +112,8 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
   if (isError) {
     return (
       <div className="p-4 bg-gray-800/50 rounded-lg h-fit">
-        <h3 className="font-medium text-white mb-3">
-          Resource Commander
-        </h3>
-
-        <p className="text-sm text-red-400">
-          Unable to load resources.
-        </p>
+        <h3 className="font-medium text-white mb-3">Resource Commander</h3>
+        <p className="text-sm text-red-400">Unable to load resources.</p>
       </div>
     );
   }
@@ -173,14 +122,10 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
     <div className="grid lg:grid-cols-2 gap-6">
       {/* Available Resources */}
       <div className="lg:col-span-1 bg-gray-800/50 p-4 rounded-lg h-fit">
-        <h3 className="font-medium text-white mb-3">
-          Available Resources
-        </h3>
+        <h3 className="font-medium text-white mb-3">Available Resources</h3>
 
         {availableResources.length === 0 ? (
-          <p className="text-sm text-gray-400">
-            No available resources.
-          </p>
+          <p className="text-sm text-gray-400">No available resources.</p>
         ) : (
           <div className="space-y-3">
             {availableResources.map((resource) => (
@@ -193,21 +138,16 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
                     <p className="font-medium text-white">
                       {resource.name || "Unnamed resource"}
                     </p>
-
                     <p className="text-xs text-gray-400">
                       {resource.resource_type || "Unknown type"}
                     </p>
-
                     <p className="text-xs text-green-300 mt-1">
-                      Load: {resource.current_load ?? 0}/
-                      {resource.capacity ?? 0}
+                      Load: {resource.current_load ?? 0}/{resource.capacity ?? 0}
                     </p>
                   </div>
 
                   <button
-                    onClick={() =>
-                      handleAssign(resource.resource_id)
-                    }
+                    onClick={() => handleAssign(resource.resource_id)}
                     disabled={!zoneId && !incidentId}
                     className="bg-green-600 text-white text-xs rounded-lg py-2 px-3 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -222,14 +162,10 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
 
       {/* Assigned Resources */}
       <div className="lg:col-span-1 bg-gray-800/50 p-4 rounded-lg h-fit">
-        <h3 className="font-medium text-white mb-3">
-          Assigned Resources
-        </h3>
+        <h3 className="font-medium text-white mb-3">Assigned Resources</h3>
 
         {assignedResources.length === 0 ? (
-          <p className="text-sm text-gray-400">
-            No resources currently assigned.
-          </p>
+          <p className="text-sm text-gray-400">No resources currently assigned.</p>
         ) : (
           <div className="space-y-3">
             {assignedResources.map((resource) => (
@@ -242,21 +178,17 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
                     <p className="font-medium text-white">
                       {resource.name || "Unnamed resource"}
                     </p>
-
                     <p className="text-xs text-gray-400">
                       {resource.resource_type || "Unknown type"}
                     </p>
-
                     <p className="text-xs text-blue-300 mt-1">
-                      Load: {resource.current_load ?? 0}/
-                      {resource.capacity ?? 0}
+                      Load: {resource.current_load ?? 0}/{resource.capacity ?? 0}
+                      {resource.assigned_zone_id && ` · zone ${resource.assigned_zone_id.slice(0, 8)}`}
                     </p>
                   </div>
 
                   <button
-                    onClick={() =>
-                      handleRelease(resource.resource_id)
-                    }
+                    onClick={() => handleRelease(resource.resource_id)}
                     className="bg-yellow-600 text-white text-xs rounded-lg py-2 px-3 hover:bg-yellow-500"
                   >
                     Release

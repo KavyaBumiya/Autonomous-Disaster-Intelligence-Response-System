@@ -14,11 +14,11 @@ export const LiveIncidentsPanel: React.FC<LiveIncidentsPanelProps> = ({
     queryKey: ["incidents", selectedZone],
     queryFn: async () => {
       const res = selectedZone
-        ? await incidentsApi.list({ zone_id: selectedZone })
-        : await incidentsApi.list();
+        ? await incidentsApi.list({ zone_id: selectedZone, active_only: true })
+        : await incidentsApi.list({ active_only: true });
       return res.data.incidents || [];
     },
-    enabled: !!selectedZone,
+    refetchInterval: 30000,
   });
 
   return (
@@ -31,14 +31,15 @@ export const LiveIncidentsPanel: React.FC<LiveIncidentsPanelProps> = ({
       ) : (
         <div className="space-y-2 text-sm">
           {incidents.map((inc) => (
-            <div key={inc.id} className="p-3 bg-gray-700/50 rounded-lg">
+            <div key={inc.incident_id} className="p-3 bg-gray-700/50 rounded-lg">
               <div className="font-medium text-white">
                 {inc.disaster_type || "Unknown"}
                 {inc.priority_score ? ` ${inc.priority_score}/100` : ""}
+                {inc.priority_band ? ` (${inc.priority_band})` : ""}
               </div>
               <div className="text-xs text-gray-300">
-                Zone: {inc.zone_id || "N/A"} Victims: {inc.victim_count || 0}{" "}
-                Status: {inc.status || "active"}
+                Zone: {inc.zone_id || "N/A"} · Victims: {inc.victim_count || 0}{" "}
+                · Status: {inc.status || "active"}
                 {inc.lat != null && inc.lng != null &&
                   ` | ${inc.lat.toFixed(4)}, ${inc.lng.toFixed(4)}`}
               </div>

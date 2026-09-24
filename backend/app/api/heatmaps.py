@@ -55,7 +55,7 @@ async def heatmap_priority(
     """
     try:
         query = (
-            select(Zone.id, Zone.name, Zone.centroid_lat, Zone.centroid_lng)
+            select(Zone.id, Zone.name, Zone.centroid_lat, Zone.centroid_lng, Zone.priority_score)
             .where(Zone.deleted == False)
         )
 
@@ -124,7 +124,7 @@ async def heatmap_victim_density(
     """
     try:
         query = (
-            select(Zone.id, Zone.name, Zone.centroid_lat, Zone.centroid_lng)
+            select(Zone.id, Zone.name, Zone.centroid_lat, Zone.centroid_lng, Zone.radius_meters)
             .where(Zone.deleted == False)
         )
 

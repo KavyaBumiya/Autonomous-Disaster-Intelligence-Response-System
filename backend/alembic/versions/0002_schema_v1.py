@@ -59,12 +59,11 @@ def upgrade() -> None:
     op.add_column("reports", sa.Column("suppressed", sa.Boolean, nullable=True, server_default="false"))
     op.add_column("reports", sa.Column("social_post_id", sa.String(80), nullable=True))
 
-    # FK from actions.approved_by → users.id (add after users table exists)
-    op.add_column("actions", sa.Column("approved_by", sa.String(36), nullable=True))
+    # actions.approved_by is already created in 0001 (with FK added later is optional;
+    # column exists — do not re-add or fresh installs hit DuplicateColumnError).
 
 
 def downgrade() -> None:
-    op.drop_column("actions", "approved_by")
     op.drop_column("reports", "social_post_id")
     op.drop_column("reports", "suppressed")
     op.drop_column("reports", "trust_score")
@@ -72,3 +71,4 @@ def downgrade() -> None:
     op.drop_table("audio_uploads")
     op.drop_table("social_media_polls")
     op.drop_table("users")
+    # NOTE: actions.approved_by is dropped with the actions table in 0001.downgrade.

@@ -1,63 +1,42 @@
 import { useEffect, useRef, useState } from "react";
-
-export interface Socket {
-  emit: (event: string, data: unknown) => void;
-  on: (event: string, callback: (data: never) => void) => void;
-  disconnect: () => void;
-}
-
-interface SocketIoClient {
-  (url?: string, opts?: Record<string, unknown>): Socket;
-}
-
-function getIo(): SocketIoClient | null {
-  if (typeof window === "undefined") return null;
-  const io = (window as unknown as { io?: SocketIoClient }).io;
-  return typeof io === "function" ? io : null;
-}
+import { io, type Socket } from "socket.io-client";
 
 /**
  * WebSocket hook for AegisAI Dashboard.
- * Connects to the Socket.IO server and tracks connection status.
+ * Connects to the backend Socket.IO server (proxied via Vite/nginx) and tracks connection status.
  *
  * Socket instance lives in a ref (not render state). Connection status
  * updates only from socket event callbacks — never synchronously in the effect body.
  */
 export function useWebSocket() {
-  const ioAvailable = getIo() !== null;
   const [connected, setConnected] = useState(false);
-  const [connecting, setConnecting] = useState(ioAvailable);
+  const [connecting, setConnecting] = useState(true);
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    const io = getIo();
-    if (!io) {
-      return;
-    }
-
-    const instance = io(import.meta.env.VITE_WS_URL, {
-      transports: ["websocket"],
+    const instance = io(import.meta.env.VITE_WS_URL || "/", {
+      transports: ["websocket", "polling"],
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
     });
 
     socketRef.current = instance;
 
-    instance.on("connect" as never, (() => {
+    instance.on("connect", () => {
       setConnected(true);
       setConnecting(false);
       instance.emit("subscribe", { room: "global_feed" });
-    }) as never);
+    });
 
-    instance.on("disconnect" as never, (() => {
+    instance.on("disconnect", () => {
       setConnected(false);
       setConnecting(false);
-    }) as never);
+    });
 
-    instance.on("connect_error" as never, ((error: unknown) => {
+    instance.on("connect_error", (error: unknown) => {
       setConnecting(false);
       console.error("WebSocket connect_error:", error);
-    }) as never);
+    });
 
     return () => {
       instance.disconnect();

@@ -1,27 +1,14 @@
 import React from "react";
 
+import { ResourcePanel as LiveResourcePanel } from "@/pages/ResourceStatusPanel";
+
 interface ResourcePanelProps {
   zoneId?: string | null;
   incidentId?: string | null;
 }
 
+/** Thin wrapper so pages that import the components/ path get the live API panel. */
 export const ResourcePanel: React.FC<ResourcePanelProps> = ({
   zoneId,
   incidentId,
-}) => {
-  return (
-    <div className="p-4 bg-gray-800/50 rounded-lg">
-      <h3 className="font-medium text-white mb-3">
-        Resource Commander
-      </h3>
-
-      <p className="text-sm text-gray-400">
-        Zone: {zoneId || "None"}
-      </p>
-
-      <p className="text-sm text-gray-400">
-        Incident: {incidentId || "None"}
-      </p>
-    </div>
-  );
-};
+}) => <LiveResourcePanel zoneId={zoneId} incidentId={incidentId} />;

@@ -92,6 +92,17 @@ class Settings(BaseSettings):
     # ── App / media ───────────────────────────────────────────────────────
     demo_scenario: str = "vadodara_flood"
     media_dir:     str = "media/audio"
+    app_env:       str = "development"
+    # Comma-separated browser origins for CORS. Empty = allow all (local demo).
+    frontend_origin: str = ""
+
+    @property
+    def cors_origins(self) -> list[str]:
+        raw = (self.frontend_origin or "").strip()
+        if not raw:
+            return ["*"]
+        origins = [o.strip() for o in raw.split(",") if o.strip()]
+        return origins or ["*"]
 
     @property
     def social_hashtag_list(self) -> list[str]:

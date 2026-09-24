@@ -1,7 +1,6 @@
 import React, { useState, useRef } from "react";
-import axios from "axios";
 import { toast } from "sonner";
-import { apiErrorMessage } from "@/services/api";
+import { default as api, apiErrorMessage } from "@/services/api";
 
 interface VictimDetectionFormProps {
   incidentId: string;
@@ -40,7 +39,7 @@ export const VictimDetectionForm: React.FC<VictimDetectionFormProps> = ({
       const formData = new FormData();
       formData.append("image", imageFile);
 
-      const res = await axios.post(
+      const res = await api.post(
         `/api/reports/${reportIds[0]}/victim-detect`,
         formData,
         {

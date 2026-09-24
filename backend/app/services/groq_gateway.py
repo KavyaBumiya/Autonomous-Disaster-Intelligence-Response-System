@@ -829,11 +829,18 @@ class GroqGateway:
 
                 execution_results_out.append({"function": fn_name, "result": result})
 
+                # Cap tool payload size — multi-tool rounds must stay under
+                # Groq's ITPM limit (7k on on_demand). Full results remain in
+                # execution_results_out for the API response / audit log.
+                content = json.dumps(_shrink_tool_result(result), default=str)
+                if len(content) > 2500:
+                    content = content[:2500] + '…"}'
+
                 current.append({
                     "role":         "tool",
                     "tool_call_id": tc.id,
                     "name":         fn_name,
-                    "content":      json.dumps(result, default=str),
+                    "content":      content,
                 })
 
         # Exceeded max rounds — ask for a final text response
@@ -1202,6 +1209,26 @@ class ToolExecutor:
 # ---------------------------------------------------------------------------
 # Offline / fallback helpers
 # ---------------------------------------------------------------------------
+
+def _shrink_tool_result(result: Any, *, max_str: int = 400, max_list: int = 8) -> Any:
+    """
+    Recursively shrink a tool result for LLM context.
+    Long strings are truncated; long lists are head-sliced.
+    Keeps multi-tool command rounds under Groq ITPM limits.
+    """
+    if isinstance(result, str):
+        return result if len(result) <= max_str else result[:max_str] + "…"
+    if isinstance(result, dict):
+        return {k: _shrink_tool_result(v, max_str=max_str, max_list=max_list)
+                for k, v in result.items()}
+    if isinstance(result, (list, tuple)):
+        head = list(result)[:max_list]
+        shrunk = [_shrink_tool_result(v, max_str=max_str, max_list=max_list) for v in head]
+        if len(result) > max_list:
+            shrunk.append(f"…(+{len(result) - max_list} more)")
+        return shrunk
+    return result
+
 
 def _detect_lang(text: str) -> str:
     """Lightweight language detection (langdetect). Falls back to 'en'."""

@@ -2,26 +2,11 @@ import React, { useEffect, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { useQuery } from "@tanstack/react-query";
-import axios from "axios";
+
+import { zonesApi, incidentsApi, type Zone, type Incident } from "@/services/api";
 
 interface CriticalZone3DProps {
   zoneId: string;
-}
-
-interface Zone {
-  id?: string;
-  name?: string;
-  centroid_lat: number;
-  centroid_lng: number;
-  priority_score?: number;
-  victim_count?: number;
-}
-
-interface Incident {
-  id?: string;
-  name?: string;
-  priority_score?: number;
-  status?: string;
 }
 
 export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
@@ -43,21 +28,21 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
   } = useQuery<Zone>({
     queryKey: ["zone", zoneId],
     queryFn: async () => {
-      const res = await axios.get<Zone>(`/api/zones/${zoneId}`);
+      const res = await zonesApi.get(zoneId);
       return res.data;
     },
     enabled: Boolean(zoneId),
   });
 
-  // Fetch incident data for this zone
+  // Fetch the first active incident for this zone (list endpoint, not get-by-id with zoneId)
   const {
     data: incident,
     isLoading: isIncidentLoading,
-  } = useQuery<Incident>({
-    queryKey: ["incident", zoneId],
+  } = useQuery<Incident | null>({
+    queryKey: ["incident", "for-zone", zoneId],
     queryFn: async () => {
-      const res = await axios.get<Incident>(`/api/incidents/${zoneId}`);
-      return res.data;
+      const res = await incidentsApi.list({ zone_id: zoneId, active_only: true, limit: 1 });
+      return res.data.incidents?.[0] ?? null;
     },
     enabled: Boolean(zoneId),
   });
@@ -247,9 +232,7 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
   if (isZoneLoading || isIncidentLoading) {
     return (
       <div className="p-6 bg-gray-800/50 rounded-lg h-fit">
-        <p className="text-gray-300">
-          Loading zone data...
-        </p>
+        <p className="text-gray-300">Loading zone data...</p>
       </div>
     );
   }
@@ -257,9 +240,7 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
   if (!zone) {
     return (
       <div className="p-6 bg-gray-800/50 rounded-lg">
-        <p className="text-red-400">
-          Unable to load zone data.
-        </p>
+        <p className="text-red-400">Unable to load zone data.</p>
       </div>
     );
   }
@@ -267,13 +248,9 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
   if (!show3D) {
     return (
       <div className="p-4 bg-gray-800/50 rounded-lg mb-4">
-        <h3 className="font-medium text-white mb-2">
-          Critical Zone Viewer
-        </h3>
+        <h3 className="font-medium text-white mb-2">Critical Zone Viewer</h3>
 
-        <p className="text-sm text-gray-300">
-          Zone: {zone.name || "Unknown"}
-        </p>
+        <p className="text-sm text-gray-300">Zone: {zone.name || "Unknown"}</p>
 
         <p className="text-sm text-gray-300">
           Priority: {zone.priority_score ?? 0}/100
@@ -281,7 +258,7 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
 
         {incident && (
           <p className="text-sm text-gray-400 mt-1">
-            Incident: {incident.name || incident.id || "Active incident"}
+            Incident: {incident.disaster_type || incident.incident_id} ({incident.priority_score}/100)
           </p>
         )}
 
@@ -334,13 +311,11 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
       </div>
 
       <div className="absolute top-4 left-4 bg-gray-900/80 text-white px-3 py-2 rounded-lg">
-        <div className="font-medium">
-          {zone.name || "Critical Zone"}
-        </div>
+        <div className="font-medium">{zone.name || "Critical Zone"}</div>
 
         <div className="text-xs text-gray-300">
           Priority: {zone.priority_score ?? 0}/100
-          {zone.victim_count && `, ${zone.victim_count} victims`}
+          {zone.victim_count ? `, ${zone.victim_count} victims` : ""}
         </div>
       </div>
     </div>

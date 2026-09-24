@@ -211,3 +211,28 @@ async def emit_route_changed(zone_id: str, route_data: dict) -> None:
     }
     await sio.emit("route_changed", payload, room="global_feed")
     await sio.emit("route_changed", payload, room=f"zone_{zone_id}")
+
+
+async def emit_resource_status_updated(
+    resource_id: str,
+    zone_id: str | None,
+    available: bool,
+    current_load: int,
+    capacity: int,
+) -> None:
+    """Fired when a resource availability/load changes."""
+    payload = {
+        "event": "resource_status_updated",
+        "payload": {
+            "resource_id": resource_id,
+            "zone_id": zone_id,
+            "available": available,
+            "current_load": current_load,
+            "capacity": capacity,
+        },
+        "timestamp": _now(),
+        "source": "resource_commander",
+    }
+    await sio.emit("resource_status_updated", payload, room="global_feed")
+    if zone_id:
+        await sio.emit("resource_status_updated", payload, room=f"zone_{zone_id}")

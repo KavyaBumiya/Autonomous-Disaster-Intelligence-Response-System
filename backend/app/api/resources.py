@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query
-from sqlalchemy import select, and_
+from pydantic import BaseModel
+from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_role, get_current_user
@@ -14,8 +15,14 @@ from app.core.database import get_db
 from app.models.resource import Resource
 from app.models.incident import Incident
 from app.engine.resource_commander import command_resources
+from app.services.websocket import emit_resource_status_updated
 
 router = APIRouter()
+
+
+class ResourceUpdateBody(BaseModel):
+    available: bool | None = None
+    current_load: int | None = None
 
 
 @router.get("", tags=["resources"])
@@ -33,7 +40,13 @@ async def list_resources(
     if resource_type:
         filters.append(Resource.resource_type == resource_type)
     if zone_id:
-        filters.append(Resource.assigned_zone_id == zone_id)
+        # Unassigned resources stay visible for every zone; assigned ones only for their zone
+        filters.append(
+            or_(
+                Resource.assigned_zone_id == zone_id,
+                Resource.assigned_zone_id.is_(None),
+            )
+        )
     if available is not None:
         filters.append(Resource.available == available)
 
@@ -129,8 +142,7 @@ async def assign_resources_to_incident(
 @router.put("/{resource_id}", tags=["resources"])
 async def update_resource(
     resource_id: str,
-    available: bool | None = None,
-    current_load: int | None = None,
+    body: ResourceUpdateBody,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(require_role(["commander"])),
 ):
@@ -140,14 +152,22 @@ async def update_resource(
     if not resource:
         raise HTTPException(404, detail="Resource not found")
 
-    if available is not None:
-        resource.available = available
-    if current_load is not None:
-        resource.current_load = max(0, min(resource.capacity, current_load))
+    if body.available is not None:
+        resource.available = body.available
+    if body.current_load is not None:
+        resource.current_load = max(0, min(resource.capacity, body.current_load))
 
     resource.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(resource)
+
+    await emit_resource_status_updated(
+        resource.id,
+        resource.assigned_zone_id,
+        resource.available,
+        resource.current_load,
+        resource.capacity,
+    )
 
     return {
         "resource_id": resource.id,

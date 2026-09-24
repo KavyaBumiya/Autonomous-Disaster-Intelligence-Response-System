@@ -44,7 +44,7 @@ async def seed_users(db: AsyncSession) -> None:
 
 
 async def seed_fixtures(db: AsyncSession) -> None:
-    fixtures_path = Path(__file__).parent.parent / "fixtures" / "vadodara_flood.json"
+    fixtures_path = Path(__file__).parent / "fixtures" / "vadodara_flood.json"
     if not fixtures_path.exists():
         print("  ⚠ Fixture file not found, skipping report seed")
         return
@@ -74,14 +74,14 @@ async def seed_fixtures(db: AsyncSession) -> None:
             VALUES (:id, :name, :rtype, :capacity, 0, :lat, :lng, true)
             ON CONFLICT (id) DO NOTHING
         """), {
-            "id": r["id"], "name": r["name"], "rtype": r["resource_type"],
-            "capacity": r["capacity"], "lat": r["lat"], "lng": r["lng"]
+            "id": r["id"], "name": r["name"], "rtype": r.get("resource_type", "supply"),
+            "capacity": r.get("capacity", 1), "lat": r.get("lat"), "lng": r.get("lng")
         })
 
     # Seed reports
     reports = data.get("reports", [])
     for i, rep in enumerate(reports):
-        created = (base_time + timedelta(minutes=i * 2)).isoformat()
+        created = base_time + timedelta(minutes=i * 2)
         await db.execute(text("""
             INSERT INTO reports (
                 id, zone_id, reporter_id, message_text, transcript, location_string,

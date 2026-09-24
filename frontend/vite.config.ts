@@ -15,7 +15,7 @@ export default defineConfig({
   },
   server: {
     host: "0.0.0.0",
-    port: 3000,
+    port: 3001, // 3000 often taken by Grafana / other local services
     proxy: {
       "/api": { target: "http://localhost:8000", changeOrigin: true },
       "/socket.io": { target: "http://localhost:8000", ws: true, changeOrigin: true },
@@ -42,6 +42,9 @@ export default defineConfig({
               return "query";
             }
             if (id.includes("axios")) return "axios";
+            if (id.includes("socket.io-client") || id.includes("engine.io-client") || id.includes("ws")) {
+              return "socket";
+            }
             if (id.includes("sonner") || id.includes("zustand")) return "ui";
             if (
               id.includes("/react/") ||

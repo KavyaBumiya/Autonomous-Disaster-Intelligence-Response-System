@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-aegisai}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegisai_secret}
     ports:
-      - "5432:5432"
+      - "5433:5432"   # host 5432 occupied by another project
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -60,9 +60,9 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "80:80"
+      - "8080:80"     # host 80 may need elevation; grafana uses 3000
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - backend
 

@@ -1,21 +1,11 @@
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import axios from "axios";
 import { useParams } from "react-router-dom";
 import { WhatIfSimulation } from "../components/WhatIfSimulation";
 import { RouteIntelligence } from "../components/RouteIntelligence";
 import { ResourcePanel } from "../components/ResourcePanel";
 
-interface Incident {
-  disaster_type?: string;
-  zone_id?: string;
-  priority_score?: number;
-  status?: string;
-  xai_reasoning?: string;
-  victim_count?: number;
-  victim_confidence?: number;
-  report_count?: number;
-}
+import { incidentsApi, type Incident } from "@/services/api";
 
 export const IncidentDetail: React.FC = () => {
   const { incidentId } = useParams<{ incidentId: string }>();
@@ -24,7 +14,7 @@ export const IncidentDetail: React.FC = () => {
   const { data: incident, isLoading } = useQuery<Incident>({
     queryKey: ["incident", incidentId],
     queryFn: async () => {
-      const res = await axios.get(`/api/incidents/${incidentId}`);
+      const res = await incidentsApi.get(incidentId!);
       return res.data;
     },
     enabled: !!incidentId,
@@ -55,17 +45,21 @@ export const IncidentDetail: React.FC = () => {
           <p className="font-medium text-white mb-2">Priority Score:</p>
           <p className="text-3xl font-bold text-yellow-400">
             {incident.priority_score || 0}/100
+            {incident.priority_band ? ` (${incident.priority_band})` : ""}
           </p>
           {incident.status && (
-            <p className="mt-2 text-sm">
-              {incident.status}
-            </p>
+            <p className="mt-2 text-sm">{incident.status}</p>
           )}
         </div>
 
-        {/* XAI Reasoning */}
+        {/* XAI Reasoning + Groq summary */}
         <div className="mb-4 p-4 bg-gray-800/50 rounded-lg h-48 overflow-y-auto">
-          <p className="font-medium text-white mb-2">XAI Reasoning:</p>
+          <p className="font-medium text-white mb-2">AI Summary & XAI Reasoning:</p>
+          {incident.groq_summary && (
+            <p className="text-sm text-gray-200 mb-2 whitespace-pre-wrap">
+              {incident.groq_summary}
+            </p>
+          )}
           <p className="text-sm text-gray-300 whitespace-pre-wrap">
             {incident.xai_reasoning || "No reasoning available"}
           </p>
@@ -99,25 +93,27 @@ export const IncidentDetail: React.FC = () => {
         {/* Tabs Navigation */}
         <div className="mt-4 pt-4 border-t border-gray-700">
           <h4 className="text-sm text-gray-300 mb-3">Navigation</h4>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              onClick={() => setActiveTab("overview")}
-              className={activeTab === "overview" ? "bg-blue-600 text-white rounded-lg py-1 px-2 text-xs font-medium" : "bg-gray-700 text-gray-300 rounded-lg py-1 px-2 text-xs font-medium"}
-            >
-              Overview
-            </button>
-            <button
-              onClick={() => setActiveTab("prediction")}
-              className={activeTab === "prediction" ? "bg-blue-600 text-white rounded-lg py-1 px-2 text-xs font-medium" : "bg-gray-700 text-gray-300 rounded-lg py-1 px-2 text-xs font-medium"}
-            >
-              Prediction
-            </button>
-            <button
-              onClick={() => setActiveTab("resources")}
-              className={activeTab === "resources" ? "bg-blue-600 text-white rounded-lg py-1 px-2 text-xs font-medium" : "bg-gray-700 text-gray-300 rounded-lg py-1 px-2 text-xs font-medium"}
-            >
-              Resources
-            </button>
+          <div className="grid grid-cols-4 gap-2">
+            {(
+              [
+                ["overview", "Overview"],
+                ["prediction", "Prediction"],
+                ["route", "Routes"],
+                ["resources", "Resources"],
+              ] as const
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={
+                  activeTab === tab
+                    ? "bg-blue-600 text-white rounded-lg py-1 px-2 text-xs font-medium"
+                    : "bg-gray-700 text-gray-300 rounded-lg py-1 px-2 text-xs font-medium"
+                }
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
@@ -149,4 +145,3 @@ export const IncidentDetail: React.FC = () => {
     </div>
   );
 };
-

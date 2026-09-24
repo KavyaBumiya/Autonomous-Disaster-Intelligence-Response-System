@@ -193,7 +193,13 @@ async def score_zone(zone_id: str, incident: Incident, db: AsyncSession) -> dict
     confidence     = round(min(0.97, 0.40 + priority_score / 200.0), 3)
 
     # ── Population density modifier (informational, not in score) ────────
-    pop_factor = _population_factor(incident.zone.name if incident.zone else None)
+    # Load zone explicitly — accessing incident.zone triggers a lazy load
+    # which raises greenlet_spawn errors under asyncio/asyncpg.
+    from app.models.zone import Zone as _Zone
+    zone_row = (
+        await db.execute(select(_Zone).where(_Zone.id == zone_id))
+    ).scalar_one_or_none()
+    pop_factor = _population_factor(zone_row.name if zone_row else None)
 
     # ── Build XAI reasoning ──────────────────────────────────────────────
     factor_values = {

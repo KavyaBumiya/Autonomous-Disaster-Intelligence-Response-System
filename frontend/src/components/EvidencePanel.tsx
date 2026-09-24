@@ -119,11 +119,11 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
           <div className="space-y-2">
             {incidents.map((inc) => {
               const b = band(inc);
-              const active = selectedId === inc.id;
+              const active = selectedId === inc.incident_id;
               return (
                 <button
-                  key={inc.id}
-                  onClick={() => handleSelect(inc.id)}
+                  key={inc.incident_id}
+                  onClick={() => handleSelect(inc.incident_id)}
                   className={`w-full rounded-lg border px-3 py-2 text-left transition ${
                     active
                       ? "border-[#38d9c4]/50 bg-[#38d9c4]/10"
@@ -256,12 +256,12 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
                 <div className="space-y-2">
                   {reportsData.reports.map((r) => (
                     <div
-                      key={r.id}
+                      key={r.report_id ?? r.id}
                       className="rounded-lg border border-white/10 bg-white/[.02] px-3 py-2"
                     >
                       <div className="flex items-center gap-2 text-xs text-slate-400">
                         <span className="rounded bg-white/10 px-1.5 py-0.5 uppercase">{r.source}</span>
-                        {r.trust_score !== null && (
+                        {r.trust_score != null && (
                           <span>Trust: {(r.trust_score * 100).toFixed(0)}%</span>
                         )}
                         {r.suppressed && (

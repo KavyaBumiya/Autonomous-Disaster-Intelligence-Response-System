@@ -116,8 +116,8 @@ async def calculate_flood_spread(zone_id: str, rainfall_mm_hr: float,
             return await calculate_flood_spread(zone_id, rainfall_mm_hr, hours, _db)
 
     zone = await _get_zone_geometry(zone_id, db)
-    cells = _generate_flood_grid(zone["centroid_lat"], zone["centroid_lng"],
-                                 zone["radius_meters"], grid_cells=12)
+    cells = await _generate_flood_grid(zone["centroid_lat"], zone["centroid_lng"],
+                                       zone["radius_meters"], grid_cells=12)
 
     results = []
     current_expire = datetime.now(timezone.utc)

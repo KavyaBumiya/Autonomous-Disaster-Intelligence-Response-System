@@ -16,6 +16,7 @@ router = APIRouter()
 
 class ActionUpdateRequest(BaseModel):
     status: str  # "approved" | "rejected"
+    note: str | None = None
 
 
 @router.patch("/{action_id}")

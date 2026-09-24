@@ -3,13 +3,23 @@ import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { io, type Socket } from "socket.io-client";
 
 import { LiveIncidentsPanel } from "./LiveIncidentsPanel";
 import { RecentReportsPanel } from "./RecentReportsPanel";
 import { ResourcePanel } from "./ResourceStatusPanel";
 import { ZoneDetail } from "./ZoneDetail";
 
-import { zonesApi, type Zone } from "@/services/api";
+import {
+  zonesApi,
+  incidentsApi,
+  resourcesApi,
+  commandApi,
+  heatmapsApi,
+  type Zone,
+  type Incident,
+  type Resource,
+} from "@/services/api";
 
 const CriticalZone3D = lazy(() =>
   import("./CriticalZone3D").then((m) => ({ default: m.CriticalZone3D }))
@@ -38,13 +48,6 @@ interface AlertItem {
   message: string;
 }
 
-interface SocketLike {
-  emit: (event: string, data: unknown) => void;
-  on: (event: string, cb: (data: never) => void) => void;
-  disconnect: () => void;
-  connect?: () => void;
-}
-
 interface HeatmapPayload {
   [key: string]: unknown;
 }
@@ -56,7 +59,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   const [selectedZone, setSelectedZone] = useState<string | null>(initialZoneId || null);
   const [isConnected, setIsConnected] = useState(false);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
-  const socketRef = useRef<SocketLike | null>(null);
+  const socketRef = useRef<Socket | null>(null);
 
   const pushAlert = (type: string, message: string) => {
     setAlerts((prev) => [{ type, message }, ...prev].slice(0, 5));
@@ -64,17 +67,11 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
   // Connect to WebSocket on mount / zone change
   useEffect(() => {
-    const socketAvailable =
-      typeof window !== "undefined" &&
-      typeof (window as unknown as { io?: unknown }).io === "function";
-
-    if (!socketAvailable) {
-      // Offline mode — API polling still works
-      return;
-    }
-
-    const io = (window as unknown as { io: (opts?: Record<string, unknown>) => SocketLike }).io;
-    const socket = io({ transports: ["websocket"] });
+    const socket = io(import.meta.env.VITE_WS_URL || "/", {
+      transports: ["websocket", "polling"],
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    });
     socketRef.current = socket;
 
     socket.emit("subscribe", { room: "global_feed" });
@@ -82,34 +79,34 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       socket.emit("subscribe", { room: `zone_${selectedZone}` });
     }
 
-    socket.on("connect" as never, (() => {
+    socket.on("connect", () => {
       setIsConnected(true);
       toast.success("Connected to AegisAI live feed");
-    }) as never);
+    });
 
-    socket.on("disconnect" as never, (() => {
+    socket.on("disconnect", () => {
       setIsConnected(false);
       toast.warning("Disconnected from live feed. Reconnecting...");
-      setTimeout(() => socket.connect?.(), 5000);
-    }) as never);
+      setTimeout(() => socket.connect(), 5000);
+    });
 
-    socket.on("new_report" as never, ((data: { payload?: { disaster_type?: string; zone_id?: string } }) => {
+    socket.on("new_report", (data: { payload?: { disaster_type?: string; zone_id?: string } }) => {
       const msg = `New report: ${data.payload?.disaster_type || "unknown"} in zone ${data.payload?.zone_id}`;
       pushAlert("info", msg);
-    }) as never);
+    });
 
-    socket.on("trust_score_updated" as never, ((data: { payload?: { report_id?: string } }) => {
+    socket.on("trust_score_updated", (data: { payload?: { report_id?: string } }) => {
       pushAlert("warning", `Trust score updated for report ${data.payload?.report_id}`);
-    }) as never);
+    });
 
-    socket.on("incident_priority_updated" as never, ((data: { payload?: { incident_id?: string; new_priority?: number } }) => {
+    socket.on("incident_priority_updated", (data: { payload?: { incident_id?: string; new_priority?: number } }) => {
       pushAlert(
         "critical",
         `Priority updated for incident ${data.payload?.incident_id}: ${data.payload?.new_priority}`
       );
-    }) as never);
+    });
 
-    socket.on("new_incident" as never, ((data: { payload?: { disaster_type?: string; zone_id?: string } }) => {
+    socket.on("new_incident", (data: { payload?: { disaster_type?: string; zone_id?: string } }) => {
       pushAlert(
         "critical",
         `New incident created: ${data.payload?.disaster_type} in zone ${data.payload?.zone_id}`
@@ -117,54 +114,67 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       if (!selectedZone && data.payload?.zone_id) {
         navigate(`/dashboard/${data.payload.zone_id}`, { replace: true });
       }
-    }) as never);
+    });
 
-    socket.on("prediction_updated" as never, ((data: { payload?: { zone_id?: string } }) => {
+    socket.on("prediction_updated", (data: { payload?: { zone_id?: string } }) => {
       pushAlert("info", `Prediction updated for zone ${data.payload?.zone_id}`);
-    }) as never);
+    });
 
-    socket.on("resource_assigned" as never, ((data: { payload?: { action_id?: string } }) => {
+    socket.on("resource_assigned", (data: { payload?: { action_id?: string } }) => {
       pushAlert("info", `Resource assigned to incident ${data.payload?.action_id}`);
-    }) as never);
+    });
 
-    socket.on("route_changed" as never, ((data: { payload?: { zone_id?: string } }) => {
+    socket.on("route_changed", (data: { payload?: { zone_id?: string } }) => {
       pushAlert("info", `Route changed for zone ${data.payload?.zone_id}`);
-    }) as never);
+    });
 
-    socket.on("command_interaction" as never, ((data: { data?: { query?: string }; event?: string }) => {
-      toast.info(`Command: ${data.data?.query || data.event || "interaction"}`);
-    }) as never);
-
-    socket.on("action_state_changed" as never, ((data: {
-      action_id?: string;
-      new_status?: string;
-      changed_by_role?: string;
+    socket.on("command_interaction", (data: {
+      payload?: { query?: string };
+      event?: string;
     }) => {
+      toast.info(`Command: ${data.payload?.query || data.event || "interaction"}`);
+    });
+
+    socket.on("action_state_changed", (data: {
+      payload?: {
+        action_id?: string;
+        new_status?: string;
+        changed_by_role?: string;
+      };
+    }) => {
+      const p = data.payload || {};
       const statusLabels: Record<string, string> = {
         approved: "approved",
         rejected: "rejected",
         dispatched: "dispatched",
         completed: "completed",
       };
-      const label = statusLabels[data.new_status || ""] || data.new_status;
+      const label = statusLabels[p.new_status || ""] || p.new_status;
       pushAlert(
         "info",
-        `Action ${data.action_id}: ${label} by ${data.changed_by_role || "system"}`
+        `Action ${p.action_id}: ${label} by ${p.changed_by_role || "system"}`
       );
-    }) as never);
+    });
 
-    socket.on("resource_status_updated" as never, ((data: {
+    socket.on("resource_status_updated", (data: {
+      payload?: {
+        resource_id?: string;
+        available?: boolean;
+        current_load?: number;
+        capacity?: number;
+      };
       resource_id?: string;
       available?: boolean;
       current_load?: number;
       capacity?: number;
     }) => {
-      const label = data.available ? "available" : "in use";
+      const p = data.payload ?? data;
+      const label = p.available ? "available" : "in use";
       pushAlert(
         "info",
-        `Resource ${data.resource_id}: ${label} (load ${data.current_load}/${data.capacity})`
+        `Resource ${p.resource_id}: ${label} (load ${p.current_load}/${p.capacity})`
       );
-    }) as never);
+    });
 
     return () => {
       socket.disconnect();
@@ -185,7 +195,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
     const fetchHeatmapData = async () => {
       try {
-        const res = await axios.get(`/api/heatmaps/combined?zone_id=${selectedZone}`);
+        const res = await heatmapsApi.combined(selectedZone);
         if (!cancelled) {
           setHeatmapData(res.data);
           setActiveHeatmap("combined");
@@ -227,6 +237,51 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       ? "Sign in with an operator account to load live zones."
       : "Backend API is offline. Start Docker Desktop and run docker compose up."
     : "No live zones returned from the backend.";
+
+  // Live stats — derived from backend queries (not hardcoded)
+  const { data: incidentsData } = useQuery<{ incidents: Incident[]; total: number }>({
+    queryKey: ["incidents", "active"],
+    queryFn: async () => {
+      const res = await incidentsApi.list({ active_only: true, limit: 200 });
+      return res.data;
+    },
+    refetchInterval: isConnected ? 15000 : 30000,
+  });
+
+  const { data: resourcesData } = useQuery<{ resources: Resource[]; total: number }>({
+    queryKey: ["resources", "all"],
+    queryFn: async () => {
+      const res = await resourcesApi.list({});
+      return res.data;
+    },
+    refetchInterval: isConnected ? 15000 : 30000,
+  });
+
+  const { data: queueData } = useQuery({
+    queryKey: ["approval-queue"],
+    queryFn: async () => {
+      const res = await commandApi.approvalQueue();
+      return res.data;
+    },
+    refetchInterval: 15000,
+  });
+
+  const activeIncidents = incidentsData?.incidents ?? [];
+  const activeIncidentCount = activeIncidents.length;
+  const peopleAtRisk = activeIncidents.reduce(
+    (sum, inc) => sum + (inc.victim_count || 0),
+    0,
+  );
+  const pendingApprovals = queueData?.pending_count ?? 0;
+
+  const resources = resourcesData?.resources ?? [];
+  const availableResources = resources.filter(
+    (r) => r.available && r.current_load < r.capacity,
+  );
+  const readiness =
+    resources.length > 0
+      ? Math.round((availableResources.length / resources.length) * 100)
+      : 0;
 
   // Default to first critical zone when nothing selected (derived, not effect)
   const defaultZoneId = useMemo(() => {
@@ -298,10 +353,30 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
         </section>
 
         <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <div className="ops-stat fade-in"><div className="ops-stat-label">Active incidents</div><div className="ops-stat-value">{activeZone ? "03" : "07"}</div><div className="mt-2 text-xs text-[#ff6b6b]">↑ 2 need attention</div></div>
-          <div className="ops-stat fade-in"><div className="ops-stat-label">People at risk</div><div className="ops-stat-value">1,284</div><div className="mt-2 text-xs text-[#f3b562]">37 detected in last hour</div></div>
-          <div className="ops-stat fade-in"><div className="ops-stat-label">Response readiness</div><div className="ops-stat-value">82%</div><div className="ops-progress mt-2"><span style={{ width: "82%" }} /></div></div>
-          <div className="ops-stat fade-in"><div className="ops-stat-label">Actions awaiting approval</div><div className="ops-stat-value text-[#f3b562]">04</div><div className="mt-2 text-xs text-slate-400">Commander review required</div></div>
+          <div className="ops-stat fade-in">
+            <div className="ops-stat-label">Active incidents</div>
+            <div className="ops-stat-value">{String(activeIncidentCount).padStart(2, "0")}</div>
+            <div className="mt-2 text-xs text-[#ff6b6b]">
+              {activeIncidents.filter((i) => (i.priority_score || 0) > 70).length} need attention
+            </div>
+          </div>
+          <div className="ops-stat fade-in">
+            <div className="ops-stat-label">People at risk</div>
+            <div className="ops-stat-value">{peopleAtRisk.toLocaleString()}</div>
+            <div className="mt-2 text-xs text-[#f3b562]">Detected across active zones</div>
+          </div>
+          <div className="ops-stat fade-in">
+            <div className="ops-stat-label">Response readiness</div>
+            <div className="ops-stat-value">{readiness}%</div>
+            <div className="ops-progress mt-2">
+              <span style={{ width: `${readiness}%` }} />
+            </div>
+          </div>
+          <div className="ops-stat fade-in">
+            <div className="ops-stat-label">Actions awaiting approval</div>
+            <div className="ops-stat-value text-[#f3b562]">{String(pendingApprovals).padStart(2, "0")}</div>
+            <div className="mt-2 text-xs text-slate-400">Commander review required</div>
+          </div>
         </section>
 
         <section className="ops-panel mb-6 flex flex-col gap-4 p-4 md:flex-row md:items-center md:justify-between">
@@ -381,22 +456,31 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
               <div className="ops-kicker mb-2">Decision queue</div>
               <div className="ops-title mb-4">Human approval gate</div>
               <div className="space-y-3">
-                {["Dispatch Team Bravo to Zone A", "Release 70 medical kits", "Open Shelter C overflow"].map((item, index) => (
+                {(queueData?.actions ?? []).slice(0, 3).map((action) => (
                   <button
-                    key={item}
+                    key={action.action_id}
                     className="flex w-full items-center gap-3 rounded-lg border border-white/10 bg-white/[.03] p-3 text-left transition hover:border-[#38d9c4]/50"
                   >
-                    <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold ${index === 0 ? "bg-[#ff6b6b]/20 text-[#ff8b8b]" : "bg-[#f3b562]/20 text-[#f3b562]"}`}>
-                      {index + 1}
+                    <span
+                      className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold ${
+                        (action.priority_score || 0) > 70
+                          ? "bg-[#ff6b6b]/20 text-[#ff8b8b]"
+                          : "bg-[#f3b562]/20 text-[#f3b562]"
+                      }`}
+                    >
+                      {action.priority_band?.charAt(0) || "!"}
                     </span>
                     <span className="text-sm text-slate-200">
-                      {item}
+                      {action.description?.slice(0, 60) || action.action_type}
                       <small className="mt-1 block text-xs text-slate-500">
-                        AI confidence {96 - index * 7}% · pending
+                        Priority {(action.priority_score || 0).toFixed(0)}/100 · pending
                       </small>
                     </span>
                   </button>
                 ))}
+                {(queueData?.actions ?? []).length === 0 && (
+                  <p className="text-xs text-slate-500">No pending actions — queue is clear.</p>
+                )}
               </div>
               <button className="ops-button-primary mt-4 w-full rounded-lg" onClick={() => navigate("/command-center")}>
                 Review queue
