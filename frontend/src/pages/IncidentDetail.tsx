@@ -1,13 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { useParams } from "react-router-dom";
-import { toast } from "sonner";
 import { WhatIfSimulation } from "../components/WhatIfSimulation";
 import { RouteIntelligence } from "../components/RouteIntelligence";
 import { ResourcePanel } from "../components/ResourcePanel";
-
-interface IncidentDetailProps {}
 
 interface Incident {
   disaster_type?: string;
@@ -20,13 +17,11 @@ interface Incident {
   report_count?: number;
 }
 
-export const IncidentDetail: React.FC<IncidentDetailProps> = () => {
+export const IncidentDetail: React.FC = () => {
   const { incidentId } = useParams<{ incidentId: string }>();
-  const [incident, setIncident] = useState<Incident | null>(null);
-  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("overview");
 
-  const { data, isLoading } = useQuery<Incident>({
+  const { data: incident, isLoading } = useQuery<Incident>({
     queryKey: ["incident", incidentId],
     queryFn: async () => {
       const res = await axios.get(`/api/incidents/${incidentId}`);
@@ -35,14 +30,7 @@ export const IncidentDetail: React.FC<IncidentDetailProps> = () => {
     enabled: !!incidentId,
   });
 
-  useEffect(() => {
-    if (data) {
-      setIncident(data);
-      setLoading(false);
-    }
-  }, [data]);
-
-  if (loading || !incident) {
+  if (isLoading || !incident) {
     return (
       <div className="card p-6 max-w-md mx-auto">
         <p>Loading incident details...</p>

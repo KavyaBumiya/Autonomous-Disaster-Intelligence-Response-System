@@ -130,7 +130,7 @@ export const SystemStatus: React.FC<SystemStatusProps> = ({
       name:   "Groq AI Gateway",
       status: groqOnline === undefined ? "unknown" : groqOnline ? "ok" : "degraded",
       note:   groqOnline
-        ? `Model: ${groqModel ?? "llama-3.3-70b-versatile"}`
+        ? `Model: ${groqModel ?? "qwen/qwen3.8-27b"}`
         : "Set GROQ_API_KEY in .env — offline fallback active",
     },
     {

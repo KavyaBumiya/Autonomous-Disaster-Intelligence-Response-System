@@ -2,23 +2,32 @@ import React, { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { toast } from "sonner";
+import { apiErrorMessage } from "@/services/api";
+
+interface Route {
+  distance_km?: number;
+  estimated_minutes?: number;
+  note?: string;
+  detour_reason?: string;
+}
+
+interface RoutesResult {
+  primary_route?: Route;
+  alternate_routes?: Route[];
+}
 
 interface RouteIntelligenceProps {
   zoneId: string;
-  incidentId: string;
+  incidentId?: string;
 }
 
 export const RouteIntelligence: React.FC<RouteIntelligenceProps> = ({
   zoneId,
-  incidentId,
 }) => {
   const [blockedRoads, setBlockedRoads] = useState("");
-  const [routes, setRoutes] = useState<{
-    primary_route?: any;
-    alternate_routes?: any[];
-  } | null>(null);
+  const [routes, setRoutes] = useState<RoutesResult | null>(null);
   const [loading, setLoading] = useState(false);
-  const { data: incidentData } = useQuery({
+  const { data: incidentData } = useQuery<{ disaster_type?: string }>({
     queryKey: ["incident", zoneId],
     queryFn: async () => {
       const res = await axios.get(`/api/incidents/${zoneId}`);
@@ -34,27 +43,19 @@ export const RouteIntelligence: React.FC<RouteIntelligenceProps> = ({
     }
     setLoading(true);
     try {
-      const res = await axios.post("/api/predictions/what-if", {
+      const altRes = await axios.post("/api/predictions/what-if", {
         zone_id: zoneId,
         disaster_type: incidentData?.disaster_type || "flood",
         resource_delta: 0,
       });
-      // For route intelligence, we use the compute_alt_route service directly
-      // In a full implementation, this would be a dedicated API endpoint
-      // that calls the route computation service
-      const altRes = await axios.post("/api/predictions/what-if", {
-        zone_id: zoneId,
-        disaster_type: "flood",
-        resource_delta: 0,
-      });
       setRoutes(altRes.data);
       toast.success("Routes computed successfully");
-    } catch (err: any) {
-      toast.error(err.response?.detail || "Route computation failed");
+    } catch (err) {
+      toast.error(apiErrorMessage(err) || "Route computation failed");
     } finally {
       setLoading(false);
     }
-  }, [blockedRoads, incidentData]);
+  }, [blockedRoads, zoneId, incidentData]);
 
   return (
     <div className="card p-6 max-w-md mx-auto">

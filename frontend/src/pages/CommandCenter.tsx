@@ -81,6 +81,11 @@ export const CommandCenter: React.FC = () => {
   const [activePanel,  setActivePanel]  = useState<"chat" | "evidence" | "approvals">("chat");
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
 
+  // Stable multi-turn conversation id (Redis-backed on the backend, PRD §11)
+  const [conversationId] = useState<string>(
+    () => `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+  );
+
   // ── Groq health check ───────────────────────────────────────────────────
   const { data: healthData } = useQuery({
     queryKey: ["command-health"],
@@ -102,9 +107,10 @@ export const CommandCenter: React.FC = () => {
   const sendMutation = useMutation({
     mutationFn: (query: string) =>
       commandApi.query({
-        user_query:   query,
-        include_xai:  true,
-        zone_context: undefined,
+        user_query:     query,
+        conversation_id: conversationId,
+        include_xai:    true,
+        zone_context:   undefined,
       }).then((r) => r.data),
 
     onMutate: (query) => {
@@ -158,20 +164,9 @@ export const CommandCenter: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Welcome message on mount
-  useEffect(() => {
-    setMessages([
-      {
-        id:        msgId(),
-        role:      "system",
-        content:   groqOnline
-          ? `Groq AI Gateway ready (${healthData?.model ?? "llama-3.3-70b-versatile"}). Ask anything about active incidents, resources, predictions, or routing.`
-          : "Running in offline mode — Groq AI unavailable. Deterministic engine and all data APIs are still operational. Type a query to see available data.",
-        timestamp: new Date(),
-      },
-    ]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groqOnline]);
+  const welcomeText = groqOnline
+    ? `Groq AI Gateway ready (${healthData?.model ?? "qwen/qwen3.8-27b"}). Ask anything about active incidents, resources, predictions, or routing.`
+    : "Running in offline mode — Groq AI unavailable. Deterministic engine and all data APIs are still operational. Type a query to see available data.";
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -285,6 +280,11 @@ export const CommandCenter: React.FC = () => {
                 </div>
 
                 <div className="flex-1 space-y-3 overflow-y-auto p-4">
+                  {messages.length === 0 && (
+                    <div className="rounded-lg border border-white/10 bg-white/[.03] p-4 text-sm text-slate-400">
+                      {welcomeText}
+                    </div>
+                  )}
                   {messages.map((msg) => (
                     <ChatBubble
                       key={msg.id}
@@ -478,7 +478,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({ msg, onSelectIncident }) => {
                     </span>
                   )}
                   {/* If this tool returned an incident_id, offer to view evidence */}
-                  {fc.arguments.incident_id && typeof fc.arguments.incident_id === "string" && (
+                  {typeof fc.arguments.incident_id === "string" && (
                     <button
                       onClick={() => onSelectIncident(fc.arguments.incident_id as string)}
                       className="ml-2 text-[#38d9c4] underline"

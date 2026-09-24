@@ -1,5 +1,5 @@
 """
-NLP Service v2 — Enhanced pipeline with HuggingFace Transformers + LLM API support:
+NLP Service v2 — Enhanced pipeline with HuggingFace Transformers:
   1. Language detection
   2. Text cleaning
   3. Transformer multi-label classification (distilbert / newer HF models)
@@ -7,13 +7,14 @@ NLP Service v2 — Enhanced pipeline with HuggingFace Transformers + LLM API sup
   5. Custom entity ruler (local landmarks / district names)
   6. Geocoding (best location entity → lat/lng)
   7. Structured output
-  8. Optional LLM API override for structured extraction
 
 Falls back to spaCy keyword rules if the transformer model is absent.
-Supports function-calling via LLM API (Claude/GPT) for complex extraction.
+
+LLM structured extraction lives in the Groq AI Gateway
+(`app.services.report_parser` / `groq_gateway.parse_report`) — this module
+is deliberately deterministic so classification confidence is auditable.
 """
 import json
-import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -24,6 +25,7 @@ from langdetect import detect, LangDetectException
 
 from app.core.config import get_settings
 from app.services.geocoding import geocode
+from app.agents.detection import DISASTER_KEYWORDS
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -36,20 +38,6 @@ _tokenizer = None
 _model = None
 _label_map: dict[str, str] = {}
 _use_transformer = False
-
-# ── LLM orchestration ─────────────────────────────────────────
-_llm_orchestration_enabled = False
-_llm_client = None
-
-try:
-    import anthropic
-    _llm_orchestration_enabled = True
-    _llm_client = anthropic.Anthropic()
-    logger.info("Anthropic LLM client initialized for NLP augmentation")
-except ImportError:
-    logger.debug("anthropic not available — LLM NLP augmentation disabled")
-except Exception as e:
-    logger.warning("Failed to initialize LLM client", error=str(e))
 
 
 def _get_nlp():
@@ -232,68 +220,18 @@ async def process(text: str) -> dict:
             lat = geo["lat"]
             lng = geo["lng"]
 
-    # Step 7: LLM API override for structured extraction (optional)
-    # If LLM is available and the report is verbose/ambiguous, try LLM augmentation
-    llm_enhanced = False
-    if _llm_orchestration_enabled and informative:
-        llm_result = await _llm_extract(text)
-        if llm_result and llm_result.get("disaster_type") and llm_result["disaster_type"] != disaster_type:
-            # LLM provides different classification; use it if more confident
-            if llm_result.get("confidence", 0) > confidence:
-                disaster_type = llm_result["disaster_type"]
-                confidence = llm_result.get("confidence", confidence)
-                llm_enhanced = True
+    # NOTE: Structured LLM extraction / translation is handled by the Groq
+    # AI Gateway in the orchestrator pipeline — not here. Keeping this
+    # service deterministic means nlp_confidence is always model-auditable.
 
     return {
         "disaster_type": disaster_type if informative else None,
         "nlp_confidence": confidence,
-        "informative_flag": informative or llm_enhanced,
+        "informative_flag": informative,
         "language_code": language,
         "location_string": location_string,
         "lat": lat,
         "lng": lng,
         "nlp_model_version": model_version,
-        "llm_enhanced": llm_enhanced,
+        "llm_enhanced": False,
     }
-
-
-async def _llm_extract(text: str) -> Optional[dict]:
-    """
-    Use LLM (Claude/GPT) with function calling to extract structured data
-    from the report text. Returns dict with disaster_type, confidence, etc.
-    """
-    import anthropic
-
-    SYSTEM_PROMPT = """You are an AegisAI disaster response NLP assistant. 
-    Extract the following from the report text:
-    - disaster_type: one of [flood, fire, earthquake, cyclone, landslide, infrastructure_damage, medical_emergency, not_disaster]
-    - confidence: float 0.0-1.0
-    - location: city/town name if mentioned, otherwise null
-    - informative: bool (is this a meaningful disaster report?)
-    
-    Return JSON only with keys: disaster_type, confidence, location, informative.
-    """
-
-    try:
-        msg = _llm_client.messages.create(
-            model="claude-3-5-sonnet-20240620",
-            max_tokens=200,
-            temperature=0.0,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": text}],
-        )
-
-        text_response = msg.content[0].text
-        result = json.loads(text_response)
-        # Validate expected keys
-        if "disaster_type" in result:
-            return {
-                "disaster_type": result["disaster_type"],
-                "confidence": min(1.0, max(0.0, float(result.get("confidence", 0.5)))),
-                "location": result.get("location"),
-                "informative": bool(result.get("informative", True)),
-            }
-        return None
-    except Exception as e:
-        logger.warning("LLM extraction failed", error=str(e))
-        return None

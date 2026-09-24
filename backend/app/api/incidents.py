@@ -49,6 +49,8 @@ async def list_incidents(
             "report_count": inc.report_count,
             "avg_trust_score": inc.avg_trust_score,
             "xai_reasoning": inc.xai_reasoning,
+            "groq_summary": inc.groq_summary,
+            "groq_explanation": inc.groq_explanation,
             "active": inc.active,
             "created_at": inc.created_at.isoformat() if inc.created_at else None,
             "updated_at": inc.updated_at.isoformat() if inc.updated_at else None,
@@ -86,6 +88,8 @@ async def get_incident(
         "report_count": inc.report_count,
         "avg_trust_score": inc.avg_trust_score,
         "xai_reasoning": inc.xai_reasoning,
+        "groq_summary": inc.groq_summary,
+        "groq_explanation": inc.groq_explanation,
         "active": inc.active,
         "created_at": inc.created_at.isoformat() if inc.created_at else None,
     }

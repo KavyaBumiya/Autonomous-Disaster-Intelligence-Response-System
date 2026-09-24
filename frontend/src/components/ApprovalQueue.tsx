@@ -9,8 +9,7 @@
  */
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { commandApi, actionsApi, incidentsApi, apiErrorMessage, type Action } from "@/services/api";
-import { toast } from "sonner";
+import { incidentsApi, type Action } from "@/services/api";
 
 // ── Priority colours ──────────────────────────────────────────────────────
 

@@ -69,6 +69,7 @@ class CommandResponseModel(BaseModel):
     model_used:        str                    = ""
     groq_available:    bool                   = False
     groq_call_id:      str                    = ""
+    conversation_id:   str | None             = None
 
 
 # ─── Health check ────────────────────────────────────────────────────────
@@ -120,11 +121,18 @@ async def command_query(
     if request.zone_context:
         query = f"[Current zone context: {request.zone_context}]\n\n{query}"
 
+    # Multi-turn history (Redis, PRD §11) — empty when conversation_id omitted
+    conversation_history: list[dict] = []
+    if request.conversation_id:
+        from app.services.conversation_store import load_history, append_turn
+        conversation_history = await load_history(request.conversation_id)
+
     try:
         result: CommandQueryResponse = await groq_gateway.command_query(
             user_query=query,
             tool_executor=executor,
             model_override=request.model_name,
+            conversation_history=conversation_history,
         )
     except Exception as exc:
         logger.error("command_query_failed", error=str(exc), user=current_user.get("user_id"))
@@ -138,6 +146,13 @@ async def command_query(
             model_used="error-fallback",
         )
 
+    # Persist this exchange for follow-up questions
+    if request.conversation_id:
+        try:
+            await append_turn(request.conversation_id, request.user_query, result.response)
+        except Exception as conv_exc:
+            logger.warning("conversation_persist_failed", error=str(conv_exc))
+
     elapsed = (datetime.now(timezone.utc) - start).total_seconds()
 
     logger.info(
@@ -146,6 +161,8 @@ async def command_query(
         role=current_user.get("role"),
         tools_called=[fc.get("name") for fc in result.function_calls],
         groq_available=groq_gateway.available,
+        conversation_id=request.conversation_id,
+        history_turns=len(conversation_history),
         elapsed_s=round(elapsed, 2),
     )
 
@@ -160,6 +177,7 @@ async def command_query(
         model_used=result.model_used,
         groq_available=groq_gateway.available,
         groq_call_id=result.groq_call_id,
+        conversation_id=request.conversation_id,
     )
 
 
@@ -184,6 +202,11 @@ async def explain_incident(
         xai_reasoning=incident.xai_reasoning or "",
         incident_id=incident_id,
     )
+
+    # Persist for Evidence / Approval panels (PRD §8)
+    if explanation and explanation != (incident.xai_reasoning or ""):
+        incident.groq_explanation = explanation
+        await db.commit()
 
     return {
         "incident_id":    incident_id,
@@ -224,6 +247,11 @@ async def summarise_incident(
     }
 
     summary = await groq_gateway.summarise_incident(evidence)
+
+    # Persist for dashboard panels (PRD §8)
+    if summary:
+        incident.groq_summary = summary
+        await db.commit()
 
     return {
         "incident_id": incident_id,
@@ -408,6 +436,8 @@ async def approval_queue(
     Return all actions pending human approval.
     Commanders review these before any dispatch is authorised.
     PRD §9: The LLM cannot approve these — only a human commander can.
+    Missing Groq narratives are generated (wording only — engine evidence
+    is the source of truth) so the approval brief is self-contained.
     """
     from app.models.action import Action
 
@@ -417,6 +447,29 @@ async def approval_queue(
         .order_by(Action.priority_score.desc())
     )
     actions = result.scalars().all()
+
+    # Ensure each linked incident has summary + explanation for the brief
+    try:
+        from app.services.incident_narrative import ensure_narratives_for_actions
+        await ensure_narratives_for_actions(
+            list({a.incident_id for a in actions if a.incident_id}),
+            db,
+        )
+        await db.commit()
+    except Exception as exc:
+        logger.warning("approval_queue_narrative_failed", error=str(exc))
+        await db.rollback()
+
+    # Reload actions + incidents after potential narrative fill
+    incident_by_id: dict[str, object] = {}
+    incident_ids = list({a.incident_id for a in actions if a.incident_id})
+    if incident_ids:
+        from app.models.incident import Incident
+
+        inc_result = await db.execute(
+            select(Incident).where(Incident.id.in_(incident_ids))
+        )
+        incident_by_id = {inc.id: inc for inc in inc_result.scalars().all()}
 
     return {
         "pending_count": len(actions),
@@ -432,6 +485,12 @@ async def approval_queue(
                 "priority_band":   _band_label(a.priority_score),
                 "status":          a.status,
                 "created_at":      a.created_at.isoformat() if a.created_at else None,
+                "incident_summary": (
+                    getattr(incident_by_id.get(a.incident_id), "groq_summary", None)
+                ),
+                "incident_explanation": (
+                    getattr(incident_by_id.get(a.incident_id), "groq_explanation", None)
+                ),
             }
             for a in actions
         ],

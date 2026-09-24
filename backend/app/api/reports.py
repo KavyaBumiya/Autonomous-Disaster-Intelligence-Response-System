@@ -41,9 +41,19 @@ class TextReportRequest(BaseModel):
 
 
 async def _ingest_report(report: Report, db: AsyncSession, background: BackgroundTasks) -> None:
-    """Shared post-save pipeline: NLP → save → orchestrate."""
-    # Run NLP if not already enriched
+    """Shared post-save pipeline: moderate → NLP → save → orchestrate."""
+    # ── Input moderation (Prompt Guard layer, PRD §4/§23) ─────────────────
+    # Flags prompt-injection / abuse; never hard-drops a distress report.
     text = report.message_text or report.transcript or ""
+    if text:
+        try:
+            from app.services.moderation_service import moderate_text, apply_moderation_to_report
+            mod = await moderate_text(text)
+            apply_moderation_to_report(report, mod)
+        except Exception as mod_exc:
+            logger.warning("moderation_skipped", error=str(mod_exc))
+
+    # Run NLP if not already enriched
     if text and not report.disaster_type:
         nlp = await nlp_service.process(text)
         report.disaster_type = nlp.get("disaster_type")
@@ -62,6 +72,8 @@ async def _ingest_report(report: Report, db: AsyncSession, background: Backgroun
     await db.refresh(report)
 
     # Run orchestration pipeline in background (non-blocking)
+    # Suppressed (flagged) reports still enter verification with low trust —
+    # the Decision Engine decides whether they move priority, not the LLM.
     background.add_task(_run_pipeline, report.id)
 
 
@@ -98,7 +110,12 @@ async def ingest_text_report(
         created_at=datetime.now(timezone.utc),
     )
     await _ingest_report(report, db, background)
-    return {"report_id": report.id, "status": "created", "source": "citizen_text"}
+    return {
+        "report_id": report.id,
+        "status": "created",
+        "source": "citizen_text",
+        "suppressed": bool(report.suppressed),
+    }
 
 
 @router.post("/voice", status_code=202)
@@ -111,7 +128,7 @@ async def ingest_voice_report(
     lat: float = Form(default=None),
     lng: float = Form(default=None),
 ):
-    """Accept a voice audio upload; transcribes via Whisper in background."""
+    """Accept a voice audio upload; transcribes via Groq Whisper (or local fallback) in background."""
     if audio_file.content_type not in ALLOWED_AUDIO_TYPES:
         raise HTTPException(415, detail=f"Unsupported audio type: {audio_file.content_type}")
 
@@ -150,7 +167,11 @@ async def ingest_voice_report(
         report_id=report.id,
         file_path=str(file_path),
         file_size_bytes=len(content),
-        whisper_model=settings.whisper_model,
+        whisper_model=(
+            settings.groq_stt_model
+            if (settings.stt_provider or "").lower() == "groq" and settings.groq_api_key
+            else settings.whisper_model
+        ),
     )
     db.add(audio_upload)
     await db.commit()
@@ -163,13 +184,14 @@ async def ingest_voice_report(
         "status": "processing",
         "source": "citizen_voice",
         "transcript": None,
+        "stt_provider": settings.stt_provider,
         "message": "Audio received. Transcription in progress.",
     }
 
 
 async def _transcribe_and_pipeline(report_id: str, file_path: str, audio_upload_id: str) -> None:
     from app.core.database import AsyncSessionLocal
-    from app.services.whisper_stt import transcribe
+    from app.services.stt_service import transcribe
 
     async with AsyncSessionLocal() as db:
         report_result = await db.execute(select(Report).where(Report.id == report_id))
@@ -181,13 +203,23 @@ async def _transcribe_and_pipeline(report_id: str, file_path: str, audio_upload_
             return
 
         try:
-            import asyncio
-            result = await asyncio.get_event_loop().run_in_executor(None, transcribe, file_path)
+            result = await transcribe(file_path)
             report.transcript = result["transcript"]
             report.language_code = result["language"]
             if audio_upload:
+                # Record which provider actually served this transcription
+                audio_upload.whisper_model = result.get(
+                    "model", audio_upload.whisper_model
+                )
                 audio_upload.duration_seconds = result["duration_seconds"]
                 audio_upload.transcription_ms = result["transcription_ms"]
+            logger.info(
+                "voice_transcribed",
+                report_id=report.id,
+                provider=result.get("provider"),
+                model=result.get("model"),
+                language=result.get("language"),
+            )
         except ValueError as e:
             logger.warning("Transcription rejected", report_id=report_id, reason=str(e))
             report.transcript = None
@@ -204,8 +236,16 @@ async def _transcribe_and_pipeline(report_id: str, file_path: str, audio_upload_
 
 
 async def _run_pipeline_in_session(report: Report, db: AsyncSession) -> None:
+    # Moderate voice transcripts before enrichment (same policy as text path)
     text = report.transcript or ""
     if text:
+        try:
+            from app.services.moderation_service import moderate_text, apply_moderation_to_report
+            mod = await moderate_text(text)
+            apply_moderation_to_report(report, mod)
+        except Exception as mod_exc:
+            logger.warning("voice_moderation_skipped", error=str(mod_exc))
+
         nlp = await nlp_service.process(text)
         report.disaster_type = nlp.get("disaster_type")
         report.nlp_confidence = nlp.get("nlp_confidence")
@@ -213,7 +253,7 @@ async def _run_pipeline_in_session(report: Report, db: AsyncSession) -> None:
         report.language_code = report.language_code or nlp.get("language_code")
         report.nlp_model_version = nlp.get("nlp_model_version", "v0_keyword")
         if not report.location_string and nlp.get("location_string"):
-            report.location_string = nlp["location_string"]
+            report.location_string = nlp.get("location_string")
         if not report.lat and nlp.get("lat"):
             report.lat = nlp["lat"]
             report.lng = nlp["lng"]

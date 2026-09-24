@@ -141,20 +141,6 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
     }
   };
 
-  const shelterResources = resources.filter(
-    (resource) => resource.resource_type === "shelter"
-  );
-
-  const availableShelters = shelterResources.filter(
-    (resource) =>
-      resource.available === true &&
-      (resource.current_load ?? 0) < (resource.capacity ?? 0)
-  );
-
-  const occupiedShelters = shelterResources.filter(
-    (resource) => resource.available !== true
-  );
-
   if (isLoading) {
     return (
       <div className="p-4 bg-gray-800/50 rounded-lg h-fit">

@@ -8,7 +8,7 @@ import socketio
 import structlog
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -74,7 +74,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Root path & favicon — prevent 404 on / and /favicon.ico
+# Root path & favicon ï¿½ prevent 404 on / and /favicon.ico
 @app.get("/", include_in_schema=False)
 async def root():
     """Redirect root to API health check for frontend compatibility."""

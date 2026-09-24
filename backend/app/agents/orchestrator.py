@@ -151,6 +151,23 @@ async def process_report(report: Report, db: AsyncSession) -> None:
 
     await db.flush()
 
+    # ── Step 5b: Persist Groq narrative from engine evidence (PRD §8) ────
+    try:
+        from app.services.incident_narrative import ensure_incident_narrative
+        # Refresh narrative when priority moved enough to matter for briefing
+        if (
+            old_priority is None
+            or abs((incident.priority_score or 0.0) - (old_priority or 0.0)) >= 5.0
+            or not (incident.groq_explanation or "").strip()
+        ):
+            await ensure_incident_narrative(incident, db, force=True)
+    except Exception as narr_exc:
+        logger.warning(
+            "narrative_generation_failed",
+            incident_id=incident.id,
+            error=str(narr_exc),
+        )
+
     # ── Step 6: WebSocket events ───────────────────────────────────────────
     await emit_new_report({
         "id":           report.id,
@@ -184,16 +201,39 @@ async def process_report(report: Report, db: AsyncSession) -> None:
 
 async def _enrich_with_groq(report: Report) -> None:
     """
-    Use Groq to extract structured fields from the raw report text.
-    Runs best-effort — any failure is silently logged, pipeline continues.
+    Use Groq to normalise (translate) and extract structured fields from the
+    raw report text. Runs best-effort — any failure is silently logged and the
+    deterministic pipeline continues (PRD §2: LLM never blocks decisions).
     """
     raw_text = report.message_text or report.transcript or ""
     if not raw_text.strip():
         return
 
     try:
+        from app.services.groq_gateway import groq_gateway
         from app.services.report_parser import parse_citizen_report, parsed_report_to_nlp_hints
-        parsed = await parse_citizen_report(raw_text)
+
+        # ── Multilingual normalisation (PRD §4-G) ─────────────────────────
+        # Original text is always preserved on the report; we parse the
+        # English translation when the source is not English.
+        parse_text = raw_text
+        try:
+            translation = await groq_gateway.translate(raw_text)
+            if translation.was_translated:
+                parse_text = translation.translated_text
+                # Original citizen wording stays on message_text/transcript;
+                # only the language code records the source language.
+                report.language_code = translation.source_language
+                logger.info(
+                    "report_translated",
+                    report_id=report.id,
+                    source_lang=translation.source_language,
+                    model=translation.model_used,
+                )
+        except Exception as t_exc:
+            logger.debug("translate_skipped", report_id=report.id, error=str(t_exc))
+
+        parsed = await parse_citizen_report(parse_text)
         hints  = parsed_report_to_nlp_hints(parsed)
 
         # Only fill fields not already set by the NLP service

@@ -68,7 +68,7 @@ export interface Action {
 
 export interface WebSocketEvent {
   event: string;
-  payload: any;
+  payload: unknown;
   timestamp: string;
   source: string;
 }

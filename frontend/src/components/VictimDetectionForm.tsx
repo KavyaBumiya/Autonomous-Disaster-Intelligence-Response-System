@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { toast } from "sonner";
+import { apiErrorMessage } from "@/services/api";
 
 interface VictimDetectionFormProps {
   incidentId: string;
@@ -9,32 +9,15 @@ interface VictimDetectionFormProps {
 }
 
 export const VictimDetectionForm: React.FC<VictimDetectionFormProps> = ({
-  incidentId,
   reportIds,
 }) => {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [victimCount, setVictimCount] = useState(0);
   const [confidence, setConfidence] = useState(0);
-  const [locations, setLocations] = useState([]);
+  const [locations, setLocations] = useState<number[][]>([]);
   const [loading, setLoading] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const imageRef = useRef<HTMLInputElement>(null);
-
-  const { data, isLoading } = useQuery({
-    queryKey: ["victim-status", incidentId, reportIds],
-    queryFn: async () => {
-      const res = await axios.get(`/api/incidents/${incidentId}/victim-status`);
-      return res.data;
-    },
-    enabled: false,
-  });
-
-  if (data && data.victim_count > 0) {
-    setVictimCount(data.victim_count);
-    setConfidence(data.victim_confidence || 0);
-    setLocations(data.victim_locations || []);
-    setShowResult(true);
-  }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -71,8 +54,8 @@ export const VictimDetectionForm: React.FC<VictimDetectionFormProps> = ({
       setConfidence(res.data.confidence_score);
       setLocations(res.data.victim_locations || []);
       setShowResult(true);
-    } catch (err: any) {
-      toast.error(err.response?.detail || "Victim detection failed");
+    } catch (err) {
+      toast.error(apiErrorMessage(err) || "Victim detection failed");
     } finally {
       setLoading(false);
     }
@@ -81,17 +64,6 @@ export const VictimDetectionForm: React.FC<VictimDetectionFormProps> = ({
   return (
     <div className="card p-6 max-w-md mx-auto">
       <h2 className="text-2xl font-bold mb-4">Victim Detection</h2>
-
-      {/* Existing status from API */}
-      {data && (
-        <div className="mb-4 p-3 bg-green-500/20 border-l-4 border-green-500 rounded">
-          <p className="text-green-200">
-            Previous detection: {data.victim_count} victims (confidence: {(
-              data.victim_confidence || 0
-            ).toFixed(2)})
-          </p>
-        </div>
-      )}
 
       {/* File upload */}
       <div className="mb-4">
@@ -118,10 +90,10 @@ export const VictimDetectionForm: React.FC<VictimDetectionFormProps> = ({
       ) : (
         <button
           onClick={detectVictims}
-          disabled={!imageFile || isLoading}
+          disabled={!imageFile}
           className="mt-4 bg-green-600 text-white font-medium rounded-lg px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {loading ? "Analyzing..." : "Detect Victims"}
+          Detect Victims
         </button>
       )}
 

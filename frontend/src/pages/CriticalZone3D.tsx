@@ -27,6 +27,7 @@ interface Incident {
 export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
   zoneId,
 }) => {
+  const hasMapboxToken = Boolean(import.meta.env.VITE_MAPBOX_TOKEN);
   const [show3D, setShow3D] = useState<boolean>(false);
 
   // HTML element that contains the Mapbox map
@@ -66,14 +67,12 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
       return;
     }
 
-    const token = import.meta.env.VITE_MAPBOX_TOKEN;
-
-    if (!token) {
+    if (!hasMapboxToken) {
       console.error("VITE_MAPBOX_TOKEN is not configured.");
-      setShow3D(false);
       return;
     }
 
+    const token = import.meta.env.VITE_MAPBOX_TOKEN as string;
     mapboxgl.accessToken = token;
 
     // Prevent creating multiple Mapbox instances
@@ -235,9 +234,13 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
         mapInstanceRef.current = null;
       }
     };
-  }, [show3D, zone]);
+  }, [show3D, zone, hasMapboxToken]);
 
   const toggleView = () => {
+    if (!hasMapboxToken && !show3D) {
+      console.error("VITE_MAPBOX_TOKEN is not configured.");
+      return;
+    }
     setShow3D((prev: boolean) => !prev);
   };
 
@@ -283,11 +286,17 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
         )}
 
         <button
-          onClick={() => setShow3D(true)}
-          className="mt-3 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-500 text-sm"
+          onClick={toggleView}
+          disabled={!hasMapboxToken}
+          className="mt-3 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-500 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Open 3D View
         </button>
+        {!hasMapboxToken && (
+          <p className="mt-2 text-xs text-yellow-400">
+            Mapbox token missing — set VITE_MAPBOX_TOKEN to enable 3D view.
+          </p>
+        )}
       </div>
     );
   }

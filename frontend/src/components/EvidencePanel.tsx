@@ -19,7 +19,7 @@
  */
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { incidentsApi, commandApi, reportsApi, apiErrorMessage, type Incident } from "@/services/api";
+import { incidentsApi, commandApi, apiErrorMessage, type Incident } from "@/services/api";
 import { toast } from "sonner";
 
 // ── Priority display helpers ──────────────────────────────────────────────

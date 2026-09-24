@@ -60,12 +60,12 @@ class TaskType(str, Enum):
     EXPLAIN          = "explain"            # XAI reasoning explanation
     TRANSLATE        = "translate"          # Multilingual normalisation
 
-# Model routing — all mapped to qwen/qwen3.8-27b which is confirmed operational
-# on this API key. When upgrading to a key with full model access, restore
-# the fast-path split (8B for parsing, 70B for reasoning).
+# Model routing — chat/parse on the confirmed primary model.
+# Translate may use the Arabic-optimised allam-2-7b when the source language
+# is Arabic; STT and moderation use their own dedicated models (see config).
 _MODEL_ROUTE: dict[TaskType, str] = {
-    TaskType.COMMAND_QUERY:  settings.groq_model,   # qwen/qwen3.8-27b
-    TaskType.REPORT_PARSE:   settings.groq_model,   # qwen/qwen3.8-27b (llama-3.1-8b unavailable)
+    TaskType.COMMAND_QUERY:  settings.groq_model,
+    TaskType.REPORT_PARSE:   settings.groq_model,
     TaskType.SUMMARISE:      settings.groq_model,
     TaskType.EXPLAIN:        settings.groq_model,
     TaskType.TRANSLATE:      settings.groq_model,
@@ -125,6 +125,15 @@ suitable for an incident commander making an approval decision.
 Be specific about contributing factors and their weights.
 End with the recommended action and its confidence level.
 Maximum 200 words.""",
+
+    "translate_v1": """You are a disaster-response translation assistant for AegisAI.
+Translate the user's text into English for the operational pipeline.
+
+Rules:
+- Preserve all factual details: numbers, people counts, place names, hazard conditions.
+- Keep place names in their original form when an English form is not standard.
+- Do not add, infer, or omit information.
+- Output ONLY the English translation as plain text — no preamble, no quotes, no markdown.""",
 }
 
 def get_prompt(name: str) -> str:
@@ -146,6 +155,17 @@ class ParsedReport(BaseModel):
     urgency: str = "medium"
     language_detected: str = "en"
     original_text_preserved: str = ""
+
+
+class TranslationResult(BaseModel):
+    """PRD §4-G: canonical English text + preserved original."""
+    original_text: str
+    translated_text: str
+    source_language: str = "en"
+    target_language: str = "en"
+    was_translated: bool = False
+    model_used: str = ""
+
 
 class CommandQueryResponse(BaseModel):
     response: str
@@ -304,6 +324,55 @@ COMMAND_TOOLS: list[dict] = [
                     "incident_id": {"type": "string"},
                 },
                 "required": ["incident_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_shelters",
+            "description": (
+                "List shelters (optionally near a zone or point) with free capacity "
+                "and distance. Deterministic — not an LLM estimate."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "zone_id":     {"type": "string", "description": "Shelters near this zone (optional)"},
+                    "lat":         {"type": "number", "description": "Origin latitude (optional)"},
+                    "lng":         {"type": "number", "description": "Origin longitude (optional)"},
+                    "available_only": {"type": "boolean", "description": "Only shelters with free capacity"},
+                    "limit":       {"type": "integer", "description": "Max results (default 5)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calculate_route",
+            "description": (
+                "Compute a disaster-aware route between two points (or from a "
+                "team/resource to a zone). Applies flood, traffic, blockage and "
+                "weather penalties to cost. Returns deterministic route data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "origin_lat":    {"type": "number"},
+                    "origin_lng":    {"type": "number"},
+                    "dest_lat":      {"type": "number"},
+                    "dest_lng":      {"type": "number"},
+                    "zone_id":       {"type": "string", "description": "Destination zone (overrides dest lat/lng if provided)"},
+                    "from_resource_id": {"type": "string", "description": "Origin resource/team ID (optional)"},
+                    "blocked_roads": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Known blocked road labels to penalise",
+                    },
+                },
+                "required": [],
             },
         },
     },
@@ -550,6 +619,102 @@ class GroqGateway:
         return summary
 
     # ------------------------------------------------------------------
+    # Public: multilingual normalisation (PRD §4-G)
+    # ------------------------------------------------------------------
+
+    async def translate(
+        self,
+        text: str,
+        source_language: str = "auto",
+    ) -> TranslationResult:
+        """
+        Normalise citizen / social text into English while preserving the original.
+
+        - English (or unknown-but-likely-English) input is returned unchanged.
+        - Non-English input is translated via Groq; original_text is always kept.
+        - On any failure the original text is returned with was_translated=False
+          so the ingestion pipeline never blocks on translation.
+        """
+        if not text or not text.strip():
+            return TranslationResult(
+                original_text=text or "",
+                translated_text=text or "",
+                source_language=source_language if source_language != "auto" else "en",
+            )
+
+        detected = source_language
+        if detected in ("", "auto", None):
+            detected = _detect_lang(text)
+
+        # Already English (or undetectable) — no LLM call needed
+        if detected in ("en", "unknown"):
+            return TranslationResult(
+                original_text=text,
+                translated_text=text,
+                source_language=detected or "en",
+                target_language="en",
+                was_translated=False,
+            )
+
+        if not self.available:
+            return TranslationResult(
+                original_text=text,
+                translated_text=text,
+                source_language=detected,
+                target_language="en",
+                was_translated=False,
+            )
+
+        # Prefer the Arabic-optimised model for Arabic sources when configured
+        override = (
+            settings.groq_translate_model
+            if detected.startswith("ar") and settings.groq_translate_model
+            else None
+        )
+        model = route_model(TaskType.TRANSLATE, override)
+        log = AILogRecord(
+            task_type=TaskType.TRANSLATE,
+            model=model,
+            prompt_template="translate_v1",
+        )
+        t_start = time.perf_counter()
+
+        try:
+            translated = await self._simple_call(
+                model=model,
+                system=get_prompt("translate_v1"),
+                user=text,
+                temperature=0.0,
+                max_tokens=512,
+            )
+            translated = (translated or "").strip()
+            if not translated:
+                raise RuntimeError("empty translation")
+            was = translated.lower() != text.strip().lower()
+            return TranslationResult(
+                original_text=text,
+                translated_text=translated,
+                source_language=detected,
+                target_language="en",
+                was_translated=was,
+                model_used=model,
+            )
+        except Exception as exc:
+            log.success = False
+            log.error = str(exc)
+            logger.warning("translate_failed", language=detected, error=str(exc))
+            return TranslationResult(
+                original_text=text,
+                translated_text=text,
+                source_language=detected,
+                target_language="en",
+                was_translated=False,
+            )
+        finally:
+            log.latency_ms = (time.perf_counter() - t_start) * 1000
+            _log_call(log)
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -562,18 +727,44 @@ class GroqGateway:
         temperature: float = 0.0,
         max_tokens: int = 512,
     ) -> str:
-        """Single-turn completion with no tool calling."""
-        client   = self._get_client()
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content or ""
+        """
+        Single-turn completion with no tool calling.
+        Falls back to `settings.groq_fallback_model` when the primary model
+        errors (rate limit / unavailable on this key tier).
+        """
+        client = self._get_client()
+        models_to_try = [model]
+        fallback = settings.groq_fallback_model
+        if fallback and fallback != model:
+            models_to_try.append(fallback)
+
+        last_exc: Exception | None = None
+        for attempt, m in enumerate(models_to_try):
+            try:
+                response = await client.chat.completions.create(
+                    model=m,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user",   "content": user},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                content = response.choices[0].message.content or ""
+                if content.strip():
+                    if attempt > 0:
+                        logger.info("groq_fallback_model_used", model=m, primary=model)
+                    return content
+                last_exc = RuntimeError(f"empty completion from {m}")
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "groq_model_call_failed",
+                    model=m,
+                    error=str(exc),
+                    will_fallback=attempt + 1 < len(models_to_try),
+                )
+        raise last_exc or RuntimeError("All Groq models failed")
 
     async def _call_with_tools(
         self,
@@ -899,6 +1090,101 @@ class ToolExecutor:
             "disaster_type":  inc.disaster_type,
         }
 
+    async def _tool_get_shelters(
+        self,
+        zone_id: str | None = None,
+        lat: float | None = None,
+        lng: float | None = None,
+        available_only: bool = True,
+        limit: int = 5,
+    ) -> dict:
+        from sqlalchemy import select
+        from app.services.route_intelligence import shelters_near, haversine_km
+        from app.models.zone import Zone as ZoneModel
+
+        origin_lat, origin_lng = lat, lng
+        if zone_id and (lat is None or lng is None):
+            z_result = await self.db.execute(
+                select(ZoneModel).where(ZoneModel.id == zone_id)
+            )
+            zone = z_result.scalar_one_or_none()
+            if zone:
+                origin_lat = zone.centroid_lat
+                origin_lng = zone.centroid_lng
+
+        if origin_lat is None or origin_lng is None:
+            # Default to all shelters within a wide radius of the first zone
+            z2 = await self.db.execute(select(ZoneModel).limit(1))
+            zone = z2.scalar_one_or_none()
+            if not zone:
+                return {"shelters": [], "total": 0, "note": "No origin or zones available"}
+            origin_lat, origin_lng = zone.centroid_lat, zone.centroid_lng
+
+        shelters = await shelters_near(
+            origin_lat, origin_lng, self.db, limit=limit, radius_km=25.0
+        )
+        if available_only:
+            shelters = [s for s in shelters if s.get("available")]
+
+        return {
+            "origin": {"lat": origin_lat, "lng": origin_lng},
+            "shelters": shelters,
+            "total": len(shelters),
+            "note": "Deterministic capacity + distance — no LLM estimation.",
+        }
+
+    async def _tool_calculate_route(
+        self,
+        origin_lat: float | None = None,
+        origin_lng: float | None = None,
+        dest_lat: float | None = None,
+        dest_lng: float | None = None,
+        zone_id: str | None = None,
+        from_resource_id: str | None = None,
+        blocked_roads: list[str] | None = None,
+    ) -> dict:
+        from sqlalchemy import select
+        from app.services.route_intelligence import calculate_route
+        from app.models.zone import Zone as ZoneModel
+        from app.models.resource import Resource as ResourceModel
+
+        # Resolve destination from zone
+        if zone_id and (dest_lat is None or dest_lng is None):
+            z_result = await self.db.execute(
+                select(ZoneModel).where(ZoneModel.id == zone_id)
+            )
+            zone = z_result.scalar_one_or_none()
+            if zone:
+                dest_lat, dest_lng = zone.centroid_lat, zone.centroid_lng
+
+        # Resolve origin from a team/resource
+        if from_resource_id and (origin_lat is None or origin_lng is None):
+            r_result = await self.db.execute(
+                select(ResourceModel).where(ResourceModel.id == from_resource_id)
+            )
+            res = r_result.scalar_one_or_none()
+            if res and res.lat is not None and res.lng is not None:
+                origin_lat, origin_lng = res.lat, res.lng
+
+        if None in (origin_lat, origin_lng, dest_lat, dest_lng):
+            return {
+                "error": (
+                    "Need origin_lat/lng and dest_lat/lng (or zone_id / "
+                    "from_resource_id to resolve them)."
+                )
+            }
+
+        route = await calculate_route(
+            float(origin_lat),
+            float(origin_lng),
+            float(dest_lat),
+            float(dest_lng),
+            blocked_roads=blocked_roads,
+            db=self.db,
+        )
+        route["note"] = route.get("note", "") + " | Deterministic Route Engine — not LLM-generated."
+        return route
+
     async def _tool_generate_explanation(
         self,
         incident_id: str,
@@ -916,6 +1202,19 @@ class ToolExecutor:
 # ---------------------------------------------------------------------------
 # Offline / fallback helpers
 # ---------------------------------------------------------------------------
+
+def _detect_lang(text: str) -> str:
+    """Lightweight language detection (langdetect). Falls back to 'en'."""
+    try:
+        from langdetect import detect, LangDetectException
+
+        try:
+            return detect(text[:500])
+        except LangDetectException:
+            return "en"
+    except ImportError:
+        return "en"
+
 
 def _offline_response(query: str) -> str:
     """Rule-based offline responses when Groq is unavailable."""

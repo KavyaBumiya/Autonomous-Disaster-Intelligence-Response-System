@@ -1,38 +1,36 @@
 import React, { useState, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { toast } from "sonner";
+import { apiErrorMessage } from "@/services/api";
 
 interface WhatIfSimulationProps {
   zoneId: string;
-  incidentId: string;
+  incidentId?: string;
   disasterType: string;
+}
+
+interface SimulationResult {
+  disaster_type: string;
+  new_priority?: number;
+  description?: string;
+  base_prediction?: { priority_base?: number | string };
+  adjusted_prediction?: {
+    affected_cells?: unknown[];
+    max_intensity?: number;
+  };
 }
 
 export const WhatIfSimulation: React.FC<WhatIfSimulationProps> = ({
   zoneId,
-  incidentId,
   disasterType,
 }) => {
   const [showFloodTab, setShowFloodTab] = useState(true);
   const [showFireTab, setShowFireTab] = useState(false);
-  const [rainfall, setRainfall] = useState(50.0);
-  const [windSpeed, setWindSpeed] = useState(20.0);
+  const [rainfall, setRainfall] = useState(50);
+  const [windSpeed, setWindSpeed] = useState(20);
   const [resourceDelta, setResourceDelta] = useState(0);
-  const [simulationResult, setSimulationResult] = useState<null | any>(null);
+  const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
   const [loading, setLoading] = useState(false);
-
-  const { data: basePrediction } = useQuery({
-    queryKey: ["prediction", zoneId, disasterType],
-    queryFn: async () => {
-      const res = await axios.post(`/api/predictions/${disasterType.toLowerCase()}`, {
-        zone_id: zoneId,
-        hours: 12,
-      });
-      return res.data;
-    },
-    enabled: false,
-  });
 
   const runSimulation = useCallback(async () => {
     setLoading(true);
@@ -46,12 +44,12 @@ export const WhatIfSimulation: React.FC<WhatIfSimulationProps> = ({
       });
       setSimulationResult(res.data);
       toast.success("What-if simulation complete");
-    } catch (err: any) {
-      toast.error(err.response?.detail || "Simulation failed");
+    } catch (err) {
+      toast.error(apiErrorMessage(err) || "Simulation failed");
     } finally {
       setLoading(false);
     }
-  }, [rainfall, windSpeed, resourceDelta, disasterType]);
+  }, [zoneId, rainfall, windSpeed, resourceDelta, disasterType]);
 
   return (
     <div className="card p-6 max-w-2xl mx-auto">

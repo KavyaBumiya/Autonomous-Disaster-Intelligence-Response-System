@@ -22,4 +22,41 @@ export default defineConfig({
       "/media": { target: "http://localhost:8000", changeOrigin: true },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes("node_modules")) {
+            if (id.includes("mapbox-gl") || id.includes("mapbox")) return "mapbox";
+            if (
+              id.includes("react-router") ||
+              id.includes("@remix-run") ||
+              id.includes("react-router-dom")
+            ) {
+              return "router";
+            }
+            if (
+              id.includes("@tanstack") ||
+              id.includes("use-sync-external-store")
+            ) {
+              return "query";
+            }
+            if (id.includes("axios")) return "axios";
+            if (id.includes("sonner") || id.includes("zustand")) return "ui";
+            if (
+              id.includes("/react/") ||
+              id.includes("/react-dom/") ||
+              id.includes("/scheduler/")
+            ) {
+              return "react";
+            }
+          }
+          return undefined;
+        },
+      },
+    },
+    // mapbox-gl is ~1.3 MB minified and loads only with the map components.
+    // It cannot be split further usefully; suppress the size warning for that chunk.
+    chunkSizeWarningLimit: 1400,
+  },
 });

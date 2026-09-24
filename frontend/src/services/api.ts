@@ -78,6 +78,7 @@ export interface Report {
   disaster_type: string | null;
   message_text: string | null;
   transcript:   string | null;
+  excerpt?:     string | null;
   lat:          number | null;
   lng:          number | null;
   created_at:   string;
@@ -106,6 +107,8 @@ export interface Action {
   priority_band:   string;
   status:          string;
   created_at:      string;
+  incident_summary?:     string | null;
+  incident_explanation?: string | null;
 }
 
 export interface CommandResponse {
@@ -116,6 +119,7 @@ export interface CommandResponse {
   model_used:        string;
   groq_available:    boolean;
   groq_call_id:      string;
+  conversation_id?:  string | null;
 }
 
 export interface GroqHealthResponse {

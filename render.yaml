@@ -26,6 +26,24 @@ services:
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
+      # Groq AI Gateway — set the real key in the Render dashboard (Secret File
+      # or env var). NEVER commit the key to the repo or render.yaml.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: qwen/qwen3.8-27b
+      # gpt-oss-* currently returns empty completions on this key tier —
+      # leave blank unless you have verified a working alternate model.
+      - key: GROQ_FALLBACK_MODEL
+        value: ""
+      - key: GROQ_STT_MODEL
+        value: whisper-large-v3-turbo
+      - key: GROQ_TRANSLATE_MODEL
+        value: allam-2-7b
+      - key: GROQ_MODERATION_MODEL
+        value: meta-llama/llama-prompt-guard-2-86m
+      - key: STT_PROVIDER
+        value: groq
       - key: WHISPER_MODEL
         value: base
       - key: NLP_MODEL_PATH
