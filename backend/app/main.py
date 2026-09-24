@@ -39,28 +39,36 @@ def _run_alembic_upgrade() -> None:
 
 
 async def _ensure_schema() -> None:
-    """Migrate DB (or create tables) then seed demo users if missing."""
+    """Create extensions + full schema from models, then seed demo users."""
     import app.models  # noqa: F401 — register models for create_all
     from app.models.user import User
 
-    # Always ensure `users` first so auth works even if PostGIS migrations fail.
+    # Extensions required by Geometry columns / migrations
     async with engine.begin() as conn:
-        await conn.run_sync(lambda c: User.__table__.create(c, checkfirst=True))
-    logger.info("users table ready")
+        for ext in ("postgis", "pgcrypto"):
+            try:
+                await conn.execute(text(f"CREATE EXTENSION IF NOT EXISTS {ext}"))
+            except Exception as exc:
+                logger.warning("Could not enable extension", ext=ext, error=str(exc))
 
+    # Full schema from ORM models (source of truth for the running app)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("metadata.create_all complete")
+    except Exception as exc:
+        logger.error("create_all failed", error=str(exc), error_type=type(exc).__name__)
+        async with engine.begin() as conn:
+            await conn.run_sync(lambda c: User.__table__.create(c, checkfirst=True))
+
+    # Try alembic for any migrations that add columns not on models (best-effort)
     try:
         await asyncio.to_thread(_run_alembic_upgrade)
         logger.info("Alembic migrations applied")
     except Exception as exc:
-        logger.warning("Alembic failed — falling back to create_all", error=str(exc))
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-            logger.info("Schema created via metadata.create_all")
-        except Exception as exc2:
-            logger.warning("create_all failed (PostGIS?) — users table still ensured", error=str(exc2))
+        logger.warning("Alembic skipped/failed (often OK if create_all ran)", error=str(exc))
 
-    # Re-ensure users if a partial migration rolled anything back
+    # Re-ensure users
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: User.__table__.create(c, checkfirst=True))
 
@@ -72,15 +80,22 @@ async def _ensure_schema() -> None:
                 logger.info("Users table empty — running demo seeder")
                 seed = importlib.import_module("seed")
                 await seed.seed_users(db)
-                if settings.mapbox_access_token:
-                    try:
-                        await seed.seed_fixtures(db)
-                    except Exception as exc:
-                        logger.warning("Fixture seed skipped", error=str(exc))
                 await db.commit()
                 logger.info("Demo seed complete")
             else:
-                logger.info("Users already present — skip seed")
+                logger.info("Users already present — skip user seed")
+
+            # Fixture data (zones/resources/reports) whenever zones is empty
+            zcount = (await db.execute(text("SELECT COUNT(*) FROM zones"))).scalar() or 0
+            if not zcount:
+                try:
+                    seed = importlib.import_module("seed")
+                    await seed.seed_fixtures(db)
+                    await db.commit()
+                    logger.info("Fixture seed complete")
+                except Exception as exc:
+                    logger.warning("Fixture seed skipped", error=str(exc))
+                    await db.rollback()
     except Exception as exc:
         logger.error("Seed failed", error=str(exc), error_type=type(exc).__name__)
 
@@ -138,7 +153,10 @@ async def unhandled_exception_handler(request, exc):
     from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error", "path": str(request.url.path)},
+        content={
+            "detail": f"{type(exc).__name__}: {exc}",
+            "path": str(request.url.path),
+        },
     )
 
 
