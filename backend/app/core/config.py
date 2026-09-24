@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     )
 
     # ── Database ──────────────────────────────────────────────────────────
+    # Overridden by DATABASE_URL. Default is Docker-Compose only (host `db`).
     database_url: str = "postgresql+asyncpg://aegisai:aegisai_secret@db:5432/aegisai"
 
     @field_validator("database_url", mode="before")
@@ -48,6 +49,20 @@ class Settings(BaseSettings):
             if host not in {"localhost", "127.0.0.1", "db", "postgres"}:
                 v = f"{v}{'&' if '?' in v else '?'}ssl=require"
         return v
+
+    def ensure_database_configured(self) -> None:
+        """Fail fast on Render when DATABASE_URL still points at Docker host `db`."""
+        import os
+
+        host_part = self.database_url.split("@", 1)[-1].split("/", 1)[0]
+        host = host_part.split(":", 1)[0]
+        on_render = bool(os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"))
+        if on_render and host in {"db", "postgres"}:
+            raise RuntimeError(
+                "DATABASE_URL is not set (still using Docker host "
+                f"'{host}'). On Render: set DATABASE_URL to the "
+                "aegisai-db *External Database URL*."
+            )
 
     # ── Redis ─────────────────────────────────────────────────────────────
     redis_url: str = "redis://redis:6379/0"

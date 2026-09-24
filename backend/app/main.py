@@ -29,6 +29,11 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     logger.info("AegisAI backend starting up")
+    try:
+        settings.ensure_database_configured()
+    except RuntimeError as exc:
+        logger.error("Database not configured", error=str(exc))
+        raise
     await start_scheduler()
     # Auto-seed demo users/fixtures when DB is empty (API keys optional).
     try:
@@ -46,8 +51,12 @@ async def lifespan(app: FastAPI):
                     logger.info("Demo seed complete")
                 except Exception as e:
                     logger.exception("Seeder failed", error=str(e))
-    except Exception:
-        logger.exception("Error checking auto-seed conditions")
+    except Exception as exc:
+        logger.error(
+            "Auto-seed skipped — cannot reach database",
+            error=str(exc),
+            database_host=settings.database_url.split("@")[-1].split("/")[0],
+        )
     yield
     await stop_scheduler()
     logger.info("AegisAI backend shut down")
