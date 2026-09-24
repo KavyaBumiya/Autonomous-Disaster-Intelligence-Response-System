@@ -35,11 +35,18 @@ class Settings(BaseSettings):
     @classmethod
     def normalise_db_url(cls, v: str) -> str:
         """Normalise Render/Heroku postgres:// URLs to asyncpg dialect."""
-        if isinstance(v, str):
-            if v.startswith("postgres://"):
-                return v.replace("postgres://", "postgresql+asyncpg://", 1)
-            if v.startswith("postgresql://") and "+asyncpg" not in v:
-                return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if not isinstance(v, str):
+            return v
+        if v.startswith("postgres://"):
+            v = v.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif v.startswith("postgresql://") and "+asyncpg" not in v:
+            v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        # Render/managed Postgres requires SSL; asyncpg reads ?ssl=require
+        if "ssl=" not in v and "sslmode=" not in v:
+            host_part = v.split("@", 1)[-1].split("/", 1)[0]
+            host = host_part.split(":", 1)[0]
+            if host not in {"localhost", "127.0.0.1", "db", "postgres"}:
+                v = f"{v}{'&' if '?' in v else '?'}ssl=require"
         return v
 
     # ── Redis ─────────────────────────────────────────────────────────────

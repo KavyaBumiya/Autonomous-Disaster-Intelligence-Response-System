@@ -30,28 +30,22 @@ async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     logger.info("AegisAI backend starting up")
     await start_scheduler()
-    # Auto-seed demo data when all API keys are provided and DB is empty
+    # Auto-seed demo users/fixtures when DB is empty (API keys optional).
     try:
-        required = [
-            settings.twitter_bearer_token,
-            settings.mapbox_access_token,
-        ]
-        if all(required):
-            async with AsyncSessionLocal() as db:
-                # check whether users table already has data
-                res = await db.execute(text("SELECT 1 FROM users LIMIT 1"))
-                row = res.first()
-                if not row:
-                    logger.info("API keys present and DB empty — running demo seeder")
-                    try:
-                        seed = importlib.import_module("seed")
-                        # seed.seed_users and seed.seed_fixtures accept an AsyncSession
-                        await seed.seed_users(db)
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(text("SELECT 1 FROM users LIMIT 1"))
+            row = res.first()
+            if not row:
+                logger.info("Users table empty — running demo seeder")
+                try:
+                    seed = importlib.import_module("seed")
+                    await seed.seed_users(db)
+                    if settings.mapbox_access_token:
                         await seed.seed_fixtures(db)
-                        await db.commit()
-                        logger.info("Demo seed complete")
-                    except Exception as e:
-                        logger.exception("Seeder failed", error=str(e))
+                    await db.commit()
+                    logger.info("Demo seed complete")
+                except Exception as e:
+                    logger.exception("Seeder failed", error=str(e))
     except Exception:
         logger.exception("Error checking auto-seed conditions")
     yield

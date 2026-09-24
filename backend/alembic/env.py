@@ -39,6 +39,11 @@ async def run_migrations_online() -> None:
         db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
     elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+asyncpg://"):
         db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if "ssl=" not in db_url and "sslmode=" not in db_url:
+        host_part = db_url.split("@", 1)[-1].split("/", 1)[0]
+        host = host_part.split(":", 1)[0]
+        if host not in {"localhost", "127.0.0.1", "db", "postgres"}:
+            db_url = f"{db_url}{'&' if '?' in db_url else '?'}ssl=require"
     connectable = create_async_engine(db_url)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
