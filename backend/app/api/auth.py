@@ -38,7 +38,14 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="Auth database unavailable. Ensure migrations ran and DATABASE_URL is set.",
         )
 
-    if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
+    if not user or not user.password_hash:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    try:
+        valid = verify_password(body.password, user.password_hash)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    if not valid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     try:

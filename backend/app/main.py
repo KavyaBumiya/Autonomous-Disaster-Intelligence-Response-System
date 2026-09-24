@@ -80,6 +80,17 @@ app = FastAPI(
 app.router.route_class = GetWithHeadRoute
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc):
+    """Never return a bare 500 body — log and return JSON."""
+    logger.exception("Unhandled error", path=str(request.url.path), error=str(exc))
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "path": str(request.url.path)},
+    )
+
+
 def _enable_head_on_get_routes(routes) -> None:
     """Ensure every registered GET APIRoute also allows HEAD.
 
@@ -153,7 +164,12 @@ app.include_router(heatmaps.router,    tags=["heatmaps"])
 
 @app.get("/api/health", tags=["health"])
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
+    import os
+    return {
+        "status": "ok",
+        "version": "1.0.0",
+        "build": os.environ.get("AEGIS_BUILD_ID", "unversioned"),
+    }
 
 
 _enable_head_on_get_routes(app.routes)
