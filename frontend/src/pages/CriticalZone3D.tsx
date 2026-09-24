@@ -231,46 +231,45 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
 
   if (isZoneLoading || isIncidentLoading) {
     return (
-      <div className="p-6 bg-gray-800/50 rounded-lg h-fit">
-        <p className="text-gray-300">Loading zone data...</p>
+      <div className="ops-panel p-6">
+        <div className="ops-kicker mb-2">Digital twin</div>
+        <p className="text-sm text-slate-400">Loading zone data…</p>
+        <div className="skeleton mt-3 h-32 w-full" />
       </div>
     );
   }
 
   if (!zone) {
     return (
-      <div className="p-6 bg-gray-800/50 rounded-lg">
-        <p className="text-red-400">Unable to load zone data.</p>
+      <div className="ops-panel p-6">
+        <div className="ops-kicker mb-2" style={{ color: "var(--red)" }}>
+          Digital twin error
+        </div>
+        <p className="text-sm text-slate-400">Unable to load zone data.</p>
       </div>
     );
   }
 
   if (!show3D) {
     return (
-      <div className="p-4 bg-gray-800/50 rounded-lg mb-4">
-        <h3 className="font-medium text-white mb-2">Critical Zone Viewer</h3>
-
-        <p className="text-sm text-gray-300">Zone: {zone.name || "Unknown"}</p>
-
-        <p className="text-sm text-gray-300">
-          Priority: {zone.priority_score ?? 0}/100
-        </p>
-
+      <div className="ops-panel p-4">
+        <div className="ops-kicker mb-2">Critical zone viewer</div>
+        <p className="text-sm text-slate-300">Zone: {zone.name || "Unknown"}</p>
+        <p className="ops-mono text-sm text-slate-300">Priority: {zone.priority_score ?? 0}/100</p>
         {incident && (
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="mt-1 text-xs text-slate-400">
             Incident: {incident.disaster_type || incident.incident_id} ({incident.priority_score}/100)
           </p>
         )}
-
         <button
           onClick={toggleView}
           disabled={!hasMapboxToken}
-          className="mt-3 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-500 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          className="ops-button ops-button-primary mt-3"
         >
-          Open 3D View
+          Open 3D view
         </button>
         {!hasMapboxToken && (
-          <p className="mt-2 text-xs text-yellow-400">
+          <p className="mt-2 text-xs text-[#f3b562]">
             Mapbox token missing — set VITE_MAPBOX_TOKEN to enable 3D view.
           </p>
         )}
@@ -279,21 +278,16 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
   }
 
   return (
-    <div className="relative h-[600px] w-full rounded-lg overflow-hidden">
-      <div
-        ref={mapContainerRef}
-        className="h-full w-full"
-      />
+    <div
+      className="relative w-full overflow-hidden rounded-[var(--radius-lg)]"
+      style={{ height: "clamp(420px, 60vh, 720px)" }}
+    >
+      <div ref={mapContainerRef} className="h-full w-full" />
 
       <div className="absolute bottom-4 left-4 flex gap-2">
-        <button
-          onClick={toggleView}
-          className="bg-gray-700 text-white px-3 py-1 rounded text-sm hover:bg-gray-600"
-          title="Switch to 2D Map"
-        >
+        <button onClick={toggleView} className="ops-button ops-button-sm" title="Switch to 2D map">
           2D
         </button>
-
         <button
           onClick={() => {
             mapInstanceRef.current?.flyTo({
@@ -303,18 +297,17 @@ export const CriticalZone3D: React.FC<CriticalZone3DProps> = ({
               duration: 1000,
             });
           }}
-          className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-500"
-          title="Fly to Center"
+          className="ops-button ops-button-primary ops-button-sm"
+          title="Fly to center"
         >
           Center
         </button>
       </div>
 
-      <div className="absolute top-4 left-4 bg-gray-900/80 text-white px-3 py-2 rounded-lg">
-        <div className="font-medium">{zone.name || "Critical Zone"}</div>
-
-        <div className="text-xs text-gray-300">
-          Priority: {zone.priority_score ?? 0}/100
+      <div className="ops-panel absolute left-4 top-4 px-3 py-2" style={{ background: "rgba(7,16,28,.85)" }}>
+        <div className="text-sm font-semibold">{zone.name || "Critical zone"}</div>
+        <div className="ops-mono text-xs text-slate-300">
+          Priority {zone.priority_score ?? 0}/100
           {zone.victim_count ? `, ${zone.victim_count} victims` : ""}
         </div>
       </div>

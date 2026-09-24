@@ -61,13 +61,13 @@ export const VictimDetectionForm: React.FC<VictimDetectionFormProps> = ({
   };
 
   return (
-    <div className="card p-6 max-w-md mx-auto">
-      <h2 className="text-2xl font-bold mb-4">Victim Detection</h2>
+    <div className="ops-panel p-6 max-w-md mx-auto">
+      <div className="ops-kicker mb-2">Vision</div>
+      <h2 className="ops-title mb-4">Victim detection</h2>
 
       {/* File upload */}
       <div className="mb-4">
-        <label className="cursor-pointer bg-blue-500 text-white font-medium rounded-lg
-          px-4 py-2 inline-block text-center">
+        <label className="ops-button cursor-pointer text-center">
           <input
             ref={imageRef}
             type="file"
@@ -75,51 +75,44 @@ export const VictimDetectionForm: React.FC<VictimDetectionFormProps> = ({
             onChange={handleFileChange}
             className="hidden"
           />
-          {imageFile ? (
-            <span>Change image</span>
-          ) : (
-            <span>Upload image for victim detection</span>
-          )}
+          {imageFile ? <span>Change image</span> : <span>Upload image for victim detection</span>}
         </label>
       </div>
 
       {/* Detection button */}
       {loading ? (
-        <p className="text-yellow-300">Analyzing image...</p>
+        <p className="ops-mono text-sm text-[#f3b562]">Analyzing image…</p>
       ) : (
         <button
+          type="button"
           onClick={detectVictims}
           disabled={!imageFile}
-          className="mt-4 bg-green-600 text-white font-medium rounded-lg px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="ops-button ops-button-primary"
         >
-          Detect Victims
+          Detect victims
         </button>
       )}
 
       {/* Results */}
       {showResult && (
-        <div className="mt-6 p-4 bg-gray-800/50 rounded-lg">
-          <p className="font-medium text-white mb-2">
-            Detection Results:
-          </p>
-          <div className="grid grid-cols-2 gap-2 text-sm">
+        <div className="ops-panel-flat mt-6 p-4">
+          <p className="ops-kicker mb-2">Detection results</p>
+          <div className="ops-kpi-grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
             <div>
-              <span className="text-gray-400">Victims found:</span>
-              <span className="font-bold text-white">{victimCount}</span>
+              <span className="ops-stat-label">Victims found</span>
+              <div className="text-lg font-bold text-white">{victimCount}</div>
             </div>
             <div>
-              <span className="text-gray-400">Confidence:</span>
-              <span className="font-bold text-yellow-400">
-                {confidence.toFixed(2)}
-              </span>
+              <span className="ops-stat-label">Confidence</span>
+              <div className="text-lg font-bold text-[#f3b562]">{confidence.toFixed(2)}</div>
             </div>
           </div>
 
           {locations.length > 0 && (
             <div className="mt-3">
-              <span className="text-gray-400 block text-xs">Location data:</span>
+              <span className="ops-stat-label block">Location data</span>
               {locations.map((loc, i) => (
-                <div key={i} className="text-xs text-gray-300">
+                <div key={i} className="ops-mono text-xs text-slate-300">
                   bbox: {JSON.stringify(loc)}
                 </div>
               ))}

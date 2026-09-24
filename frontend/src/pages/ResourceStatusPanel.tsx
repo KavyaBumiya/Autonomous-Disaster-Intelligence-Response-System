@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -8,23 +8,100 @@ import {
   apiErrorMessage,
   type Resource,
 } from "@/services/api";
+import { Button, EmptyState, ErrorState, LoadingState, Modal, ResourceStatusBadge } from "@/components/ui";
 
 interface ResourcePanelProps {
   zoneId?: string | null;
   incidentId?: string | null;
+  compact?: boolean;
   showShelterView?: boolean;
 }
+
+type FilterKey = "all" | "available" | "assigned";
+
+const TYPE_FILTERS: Array<{ value: string; label: string }> = [
+  { value: "all", label: "All types" },
+  { value: "medical", label: "Medical" },
+  { value: "fire", label: "Fire" },
+  { value: "rescue", label: "Rescue" },
+  { value: "police", label: "Police" },
+  { value: "shelter", label: "Shelter" },
+  { value: "transport", label: "Transport" },
+];
+
+const ResourceCard: React.FC<{
+  resource: Resource;
+  onAssign: (id: string) => void;
+  onRelease: (id: string) => void;
+  busy: boolean;
+}> = ({ resource, onAssign, onRelease, busy }) => {
+  const isAvail =
+    resource.available === true &&
+    (resource.current_load ?? 0) < (resource.capacity ?? 0);
+
+  return (
+    <div className="ops-resource-card">
+      <div className="flex items-start justify-between gap-2">
+        <div className="ops-resource-title" title={resource.name || "Unnamed resource"}>
+          {resource.name || "Unnamed resource"}
+        </div>
+        <ResourceStatusBadge
+          available={resource.available}
+          currentLoad={resource.current_load}
+          capacity={resource.capacity}
+        />
+      </div>
+      <div className="ops-resource-meta mt-1">{resource.resource_type || "Unknown type"}</div>
+      <div className="ops-resource-meta mt-2 ops-mono">
+        Load {resource.current_load ?? 0}/{resource.capacity ?? 0}
+        {resource.assigned_zone_id
+          ? ` · zone ${resource.assigned_zone_id.slice(0, 8)}`
+          : ""}
+      </div>
+      <div className="ops-resource-action">
+        {isAvail ? (
+          <Button
+            variant="primary"
+            size="sm"
+            block
+            disabled={busy}
+            onClick={() => onAssign(resource.resource_id)}
+          >
+            Assign
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            block
+            disabled={busy}
+            onClick={() => onRelease(resource.resource_id)}
+          >
+            Release
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export const ResourcePanel: React.FC<ResourcePanelProps> = ({
   zoneId,
   incidentId,
+  compact = false,
 }) => {
   const queryClient = useQueryClient();
+  const [statusFilter, setStatusFilter] = useState<FilterKey>("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [pendingResource, setPendingResource] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const {
     data: resources = [],
     isLoading,
     isError,
+    refetch,
   } = useQuery<Resource[]>({
     queryKey: ["resources", zoneId],
     queryFn: async () => {
@@ -38,23 +115,53 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
   const availableResources = resources.filter(
     (resource) =>
       resource.available === true &&
-      (resource.current_load ?? 0) < (resource.capacity ?? 0)
+      (resource.current_load ?? 0) < (resource.capacity ?? 0),
   );
 
   const assignedResources = resources.filter(
-    (resource) => resource.available !== true || (resource.assigned_zone_id ?? null) !== null
+    (resource) =>
+      resource.available !== true ||
+      (resource.assigned_zone_id ?? null) !== null,
   );
 
-  const handleAssign = async (resourceId: string) => {
+  const filtered = useMemo(() => {
+    let list =
+      statusFilter === "available"
+        ? availableResources
+        : statusFilter === "assigned"
+          ? assignedResources
+          : resources;
+    if (typeFilter !== "all") {
+      list = list.filter(
+        (r) => (r.resource_type || "").toLowerCase() === typeFilter,
+      );
+    }
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter(
+        (r) =>
+          (r.name || "").toLowerCase().includes(q) ||
+          (r.resource_type || "").toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [resources, statusFilter, typeFilter, search, availableResources, assignedResources]);
+
+  const openAssign = (resourceId: string) => {
     if (!zoneId && !incidentId) {
       toast.error("Select a zone or incident before assigning a resource.");
       return;
     }
+    setPendingResource(resourceId);
+    setAssignOpen(true);
+  };
 
+  const handleAssign = async () => {
+    if (!pendingResource) return;
+    setBusy(true);
     try {
       let targetIncidentId = incidentId;
 
-      // Resolve a concrete incident for the zone if only a zone is selected
       if (!targetIncidentId && zoneId) {
         const incRes = await incidentsApi.list({
           zone_id: zoneId,
@@ -66,139 +173,237 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
 
       if (!targetIncidentId) {
         toast.error("No active incident found for this zone.");
+        setAssignOpen(false);
         return;
       }
 
-      // Backend runs the resource-commander allocation for the incident
       const response = await resourcesApi.assign(targetIncidentId);
-      toast.success(
-        response.data?.message || "Resource allocation complete"
-      );
+      toast.success(response.data?.message || "Resource allocation complete");
 
       await queryClient.invalidateQueries({ queryKey: ["resources"] });
       await queryClient.invalidateQueries({ queryKey: ["incidents"] });
-      void resourceId;
+      setAssignOpen(false);
     } catch (error: unknown) {
       toast.error(apiErrorMessage(error) || "Failed to assign resource");
+    } finally {
+      setBusy(false);
+      setPendingResource(null);
     }
   };
 
   const handleRelease = async (resourceId: string) => {
+    setBusy(true);
     try {
       const response = await resourcesApi.update(resourceId, {
         available: true,
         current_load: 0,
       });
-
-      toast.success(
-        response.data?.message || "Resource released successfully"
-      );
-
+      toast.success(response.data?.message || "Resource released successfully");
       await queryClient.invalidateQueries({ queryKey: ["resources"] });
     } catch (error: unknown) {
       toast.error(apiErrorMessage(error) || "Failed to release resource");
+    } finally {
+      setBusy(false);
     }
   };
 
   if (isLoading) {
     return (
-      <div className="p-4 bg-gray-800/50 rounded-lg h-fit">
-        <h3 className="font-medium text-white mb-3">Resource Commander</h3>
-        <p className="text-sm text-gray-400">Loading resources...</p>
+      <div className="ops-panel">
+        <div className="ops-panel-header">
+          <div>
+            <div className="ops-kicker">Resources</div>
+            <div className="ops-title">Resource commander</div>
+          </div>
+        </div>
+        <LoadingState label="Loading resources…" />
       </div>
     );
   }
 
   if (isError) {
     return (
-      <div className="p-4 bg-gray-800/50 rounded-lg h-fit">
-        <h3 className="font-medium text-white mb-3">Resource Commander</h3>
-        <p className="text-sm text-red-400">Unable to load resources.</p>
+      <div className="ops-panel">
+        <div className="ops-panel-header">
+          <div>
+            <div className="ops-kicker">Resources</div>
+            <div className="ops-title">Resource commander</div>
+          </div>
+        </div>
+        <ErrorState message="Unable to load resources from the backend." onRetry={() => void refetch()} />
+      </div>
+    );
+  }
+
+  const filters = (
+    <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+      <input
+        className="ops-input"
+        style={{ maxWidth: 200 }}
+        placeholder="Search resources…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        aria-label="Search resources"
+      />
+      <select
+        className="ops-select"
+        style={{ width: "auto" }}
+        value={statusFilter}
+        onChange={(e) => setStatusFilter(e.target.value as FilterKey)}
+        aria-label="Filter by status"
+      >
+        <option value="all">All statuses</option>
+        <option value="available">Available</option>
+        <option value="assigned">Assigned</option>
+      </select>
+      <select
+        className="ops-select"
+        style={{ width: "auto" }}
+        value={typeFilter}
+        onChange={(e) => setTypeFilter(e.target.value)}
+        aria-label="Filter by type"
+      >
+        {TYPE_FILTERS.map((t) => (
+          <option key={t.value} value={t.value}>
+            {t.label}
+          </option>
+        ))}
+      </select>
+      <span className="ops-mono ml-auto text-xs text-slate-500">
+        {filtered.length}/{resources.length}
+      </span>
+    </div>
+  );
+
+  if (compact) {
+    const list = filtered.slice(0, 6);
+    return (
+      <div className="ops-panel">
+        <div className="ops-panel-header">
+          <div>
+            <div className="ops-kicker">Resources</div>
+            <div className="ops-title">Resource commander</div>
+          </div>
+          <span className="ops-mono text-xs text-slate-400">
+            {availableResources.length} ready
+          </span>
+        </div>
+        <div className="ops-scroll-y ops-resource-grid" style={{ maxHeight: 420, padding: 14, gridTemplateColumns: "1fr" }}>
+          {list.length === 0 ? (
+            <EmptyState title="No resources" message="No resources match the current filters." />
+          ) : (
+            list.map((r) => (
+              <ResourceCard
+                key={r.resource_id}
+                resource={r}
+                onAssign={openAssign}
+                onRelease={handleRelease}
+                busy={busy}
+              />
+            ))
+          )}
+        </div>
+        <div className="px-4 pb-4">
+          <Button block onClick={() => setStatusFilter(statusFilter === "available" ? "all" : "available")}>
+            {statusFilter === "available" ? "Show all" : "Show available only"}
+          </Button>
+        </div>
+        <Modal
+          open={assignOpen}
+          onClose={() => setAssignOpen(false)}
+          title="Confirm assignment"
+          footer={
+            <>
+              <Button onClick={() => setAssignOpen(false)} disabled={busy}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={handleAssign} disabled={busy}>
+                {busy ? "Assigning…" : "Assign resource"}
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm leading-6 text-slate-300">
+            This will run the backend resource-commander allocation for the active incident in
+            the selected zone. The action is logged for audit.
+          </p>
+        </Modal>
       </div>
     );
   }
 
   return (
-    <div className="grid lg:grid-cols-2 gap-6">
-      {/* Available Resources */}
-      <div className="lg:col-span-1 bg-gray-800/50 p-4 rounded-lg h-fit">
-        <h3 className="font-medium text-white mb-3">Available Resources</h3>
+    <div className="ops-panel">
+      <div className="ops-panel-header">
+        <div>
+          <div className="ops-kicker">Resources</div>
+          <div className="ops-title">Resource commander</div>
+        </div>
+        <div className="flex gap-2">
+          <span className="ops-badge ops-badge-cyan">
+            <span className="ops-badge-dot" /> {availableResources.length} ready
+          </span>
+          <span className="ops-badge ops-badge-amber">
+            <span className="ops-badge-dot" /> {assignedResources.length} assigned
+          </span>
+        </div>
+      </div>
 
-        {availableResources.length === 0 ? (
-          <p className="text-sm text-gray-400">No available resources.</p>
-        ) : (
-          <div className="space-y-3">
-            {availableResources.map((resource) => (
-              <div
-                key={resource.resource_id}
-                className="p-3 bg-green-500/10 border-l-4 border-green-500 rounded"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-white">
-                      {resource.name || "Unnamed resource"}
-                    </p>
-                    <p className="text-xs text-gray-400">
-                      {resource.resource_type || "Unknown type"}
-                    </p>
-                    <p className="text-xs text-green-300 mt-1">
-                      Load: {resource.current_load ?? 0}/{resource.capacity ?? 0}
-                    </p>
-                  </div>
+      {filters}
 
-                  <button
-                    onClick={() => handleAssign(resource.resource_id)}
-                    disabled={!zoneId && !incidentId}
-                    className="bg-green-600 text-white text-xs rounded-lg py-2 px-3 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Assign
-                  </button>
-                </div>
-              </div>
-            ))}
+      <div className="ops-resource-grid px-4 pb-4">
+        {filtered.length === 0 ? (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <EmptyState
+              title="No matching resources"
+              message="Adjust the status, type, or search filters to see more units."
+              action={
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setStatusFilter("all");
+                    setTypeFilter("all");
+                    setSearch("");
+                  }}
+                >
+                  Reset filters
+                </Button>
+              }
+            />
           </div>
+        ) : (
+          filtered.map((r) => (
+            <ResourceCard
+              key={r.resource_id}
+              resource={r}
+              onAssign={openAssign}
+              onRelease={handleRelease}
+              busy={busy}
+            />
+          ))
         )}
       </div>
 
-      {/* Assigned Resources */}
-      <div className="lg:col-span-1 bg-gray-800/50 p-4 rounded-lg h-fit">
-        <h3 className="font-medium text-white mb-3">Assigned Resources</h3>
-
-        {assignedResources.length === 0 ? (
-          <p className="text-sm text-gray-400">No resources currently assigned.</p>
-        ) : (
-          <div className="space-y-3">
-            {assignedResources.map((resource) => (
-              <div
-                key={resource.resource_id}
-                className="p-3 bg-blue-500/10 border-l-4 border-blue-500 rounded"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-white">
-                      {resource.name || "Unnamed resource"}
-                    </p>
-                    <p className="text-xs text-gray-400">
-                      {resource.resource_type || "Unknown type"}
-                    </p>
-                    <p className="text-xs text-blue-300 mt-1">
-                      Load: {resource.current_load ?? 0}/{resource.capacity ?? 0}
-                      {resource.assigned_zone_id && ` · zone ${resource.assigned_zone_id.slice(0, 8)}`}
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={() => handleRelease(resource.resource_id)}
-                    className="bg-yellow-600 text-white text-xs rounded-lg py-2 px-3 hover:bg-yellow-500"
-                  >
-                    Release
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <Modal
+        open={assignOpen}
+        onClose={() => setAssignOpen(false)}
+        title="Confirm assignment"
+        footer={
+          <>
+            <Button onClick={() => setAssignOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleAssign} disabled={busy}>
+              {busy ? "Assigning…" : "Assign resource"}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-6 text-slate-300">
+          This will run the backend resource-commander allocation for the active incident in
+          the selected zone. The action is logged for audit.
+        </p>
+      </Modal>
     </div>
   );
 };

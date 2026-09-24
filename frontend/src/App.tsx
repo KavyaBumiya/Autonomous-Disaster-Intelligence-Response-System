@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 
 const DashboardLayout = lazy(() =>
   import("./pages/DashboardLayout").then((m) => ({ default: m.DashboardLayout }))
@@ -9,6 +9,24 @@ const CommandCenter = lazy(() =>
 );
 const IncidentDetail = lazy(() =>
   import("./pages/IncidentDetail").then((m) => ({ default: m.IncidentDetail }))
+);
+const LoginPage = lazy(() =>
+  import("./pages/LoginPage").then((m) => ({ default: m.LoginPage }))
+);
+const ResourcesPage = lazy(() =>
+  import("./pages/ResourcesPage").then((m) => ({ default: m.ResourcesPage }))
+);
+const PredictionsPage = lazy(() =>
+  import("./pages/PredictionsPage").then((m) => ({ default: m.PredictionsPage }))
+);
+const HeatmapsPage = lazy(() =>
+  import("./pages/HeatmapsPage").then((m) => ({ default: m.HeatmapsPage }))
+);
+const AlertsPage = lazy(() =>
+  import("./pages/AlertsPage").then((m) => ({ default: m.AlertsPage }))
+);
+const Zone3DPage = lazy(() =>
+  import("./pages/Zone3DPage").then((m) => ({ default: m.Zone3DPage }))
 );
 
 const RouteFallback = () => (
@@ -24,10 +42,23 @@ export const App: React.FC = () => {
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
+        <Route path="/login" element={<LoginPage />} />
+
         <Route path="/" element={<DashboardLayout />} />
-        <Route path="/dashboard/:zoneId?" element={<DashboardLayout />} />
+        <Route path="/dashboard" element={<DashboardLayout />} />
+        <Route path="/dashboard/:zoneId" element={<DashboardLayout />} />
+
+        <Route path="/command" element={<CommandCenter />} />
         <Route path="/command-center" element={<CommandCenter />} />
+
         <Route path="/incidents/:incidentId" element={<IncidentDetail />} />
+        <Route path="/resources" element={<ResourcesPage />} />
+        <Route path="/predictions" element={<PredictionsPage />} />
+        <Route path="/heatmaps" element={<HeatmapsPage />} />
+        <Route path="/alerts" element={<AlertsPage />} />
+        <Route path="/3d/:zoneId" element={<Zone3DPage />} />
+
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
   );

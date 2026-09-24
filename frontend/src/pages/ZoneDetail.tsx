@@ -1,12 +1,12 @@
 import React, { Suspense, lazy, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
 import { zonesApi, incidentsApi } from "@/services/api";
 import { WhatIfSimulation } from "../components/WhatIfSimulation";
 import { RouteIntelligence } from "../components/RouteIntelligence";
 import { ResourcePanel } from "../components/ResourcePanel";
-import { LiveIncidentsPanel } from "./LiveIncidentsPanel";
+import { Button, PriorityBadge } from "@/components/ui";
 
 const CriticalZone3D = lazy(() =>
   import("./CriticalZone3D").then((m) => ({ default: m.CriticalZone3D }))
@@ -37,11 +37,21 @@ interface ZoneSummary {
   victim_count?: number;
 }
 
+type ZoneView = "overview" | "prediction" | "route" | "resources" | "3d";
+
+const TABS: Array<{ id: ZoneView; label: string }> = [
+  { id: "overview", label: "Overview" },
+  { id: "prediction", label: "What-If" },
+  { id: "route", label: "Routes" },
+  { id: "resources", label: "Resources" },
+  { id: "3d", label: "3D" },
+];
+
 export const ZoneDetail: React.FC<ZoneDetailProps> = ({ zoneId }) => {
   const { incidentId } = useParams<{ incidentId: string }>();
-  const [view, setView] = useState("overview");
+  const navigate = useNavigate();
+  const [view, setView] = useState<ZoneView>("overview");
 
-  // Fetch zone when incident changes
   const { data: zone } = useQuery<ZoneData | null>({
     queryKey: ["zone-detail", incidentId],
     queryFn: async () => {
@@ -57,10 +67,8 @@ export const ZoneDetail: React.FC<ZoneDetailProps> = ({ zoneId }) => {
     enabled: !!incidentId,
   });
 
-  // Prefer parent prop, then zone resolved from incident
   const activeZoneId = zoneId ?? zone?.zone_id ?? null;
 
-  // Fetch zone details when active zone changes
   const { data: zoneDetails } = useQuery<ZoneSummary | null>({
     queryKey: ["zone", activeZoneId],
     queryFn: async () => {
@@ -81,101 +89,83 @@ export const ZoneDetail: React.FC<ZoneDetailProps> = ({ zoneId }) => {
     enabled: !!activeZoneId,
   });
 
+  if (!activeZoneId) {
+    return (
+      <div className="ops-panel p-6">
+        <div className="ops-kicker mb-2">Zone workspace</div>
+        <div className="ops-title mb-2">No zone selected</div>
+        <p className="text-sm text-slate-400">
+          Select a zone on the map or from the zone dropdown to open reasoning tools.
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div>
-      <main className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Panel: Live Panels */}
-        <div className="lg:col-span-1 space-y-4">
-          <LiveIncidentsPanel selectedZone={activeZoneId} />
-          <ResourcePanel zoneId={activeZoneId} />
+    <div className="ops-panel">
+      <div className="ops-panel-header flex-col gap-3 sm:flex-row">
+        <div className="min-w-0">
+          <div className="ops-kicker">Zone workspace</div>
+          <div className="ops-title ops-truncate">
+            {zoneDetails?.name || `Zone ${activeZoneId.slice(0, 8)}`}
+          </div>
         </div>
-
-        {/* Center Panel based on view */}
-        <div className="lg:col-span-1 space-y-4">
-          {view === "prediction" && activeZoneId ? (
-            <WhatIfSimulation
-              zoneId={activeZoneId}
-              incidentId={incidentId || ""}
-              disasterType={zone?.disaster_type || "flood"}
-            />
-          ) : view === "route" && activeZoneId ? (
-            <RouteIntelligence zoneId={activeZoneId} incidentId={incidentId || ""} />
-          ) : view === "resources" && activeZoneId ? (
-            <ResourcePanel zoneId={activeZoneId} incidentId={incidentId || ""} />
-          ) : view === "3d" && activeZoneId ? (
-            <Suspense fallback={<Zone3DFallback />}>
-              <CriticalZone3D zoneId={activeZoneId} />
-            </Suspense>
-          ) : (
-            <div>
-              <div className="flex mb-3">
-                <button
-                  onClick={() => setView("overview")}
-                  className={view === "overview" ? "bg-blue-600 text-white rounded-lg py-1 px-2 text-xs font-medium" : "bg-gray-700 text-gray-300 rounded-lg py-1 px-2 text-xs font-medium"}
-                >
-                  Overview
-                </button>
-                <button
-                  onClick={() => setView("prediction")}
-                  className={view === "prediction" ? "bg-blue-600 text-white rounded-lg py-1 px-2 text-xs font-medium" : "bg-gray-700 text-gray-300 rounded-lg py-1 px-2 text-xs font-medium"}
-                >
-                  What-If
-                </button>
-                <button
-                  onClick={() => setView("route")}
-                  className={view === "route" ? "bg-blue-600 text-white rounded-lg py-1 px-2 text-xs font-medium" : "bg-gray-700 text-gray-300 rounded-lg py-1 px-2 text-xs font-medium"}
-                >
-                  Route Intelligence
-                </button>
-                <button
-                  onClick={() => setView("3d")}
-                  className={view === "3d" ? "bg-blue-600 text-white rounded-lg py-1 px-2 text-xs font-medium" : "bg-gray-700 text-gray-300 rounded-lg py-1 px-2 text-xs font-medium"}
-                >
-                  3D View
-                </button>
-              </div>
-              {activeZoneId ? (
-                <p className="text-sm text-gray-400">
-                  Select a view above for {zoneDetails?.name || "this zone"}.
-                </p>
-              ) : (
-                <p className="text-sm text-gray-400">
-                  Select an incident to begin monitoring.
-                </p>
-              )}
-            </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {typeof zoneDetails?.priority_score === "number" && (
+            <PriorityBadge score={zoneDetails.priority_score} />
           )}
+          <Button size="sm" onClick={() => navigate(`/3d/${activeZoneId}`)}>
+            Full 3D
+          </Button>
         </div>
+      </div>
 
-        {/* Right Panel: 3D View or expanded details */}
-        <div className="lg:col-span-1 space-y-4">
-          {activeZoneId ? (
-            <>
-              <button
-                onClick={() => setView("3d")}
-                className="w-full bg-purple-600 text-white mb-3 rounded-lg py-2 text-sm hover:bg-purple-500"
-              >
-                Open Full 3D View
-              </button>
+      <div className="flex flex-wrap gap-1 border-b border-[var(--line)] px-4 py-3" role="tablist">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={view === tab.id}
+            onClick={() => setView(tab.id)}
+            className={`ops-nav-link ${view === tab.id ? "active" : ""}`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-              {view === "resources" ? (
-                <ResourcePanel zoneId={activeZoneId} incidentId={incidentId || ""} />
-              ) : null}
-
-              {view === "prediction" ? (
-                <WhatIfSimulation
-                  zoneId={activeZoneId}
-                  incidentId={incidentId || ""}
-                  disasterType={zone?.disaster_type || "flood"}
-                />
-              ) : null}
-              {view === "route" ? (
-                <RouteIntelligence zoneId={activeZoneId} incidentId={incidentId || ""} />
-              ) : null}
-            </>
-          ) : null}
-        </div>
-      </main>
+      <div className="ops-panel-body">
+        {view === "prediction" ? (
+          <WhatIfSimulation
+            zoneId={activeZoneId}
+            incidentId={incidentId || ""}
+            disasterType={zone?.disaster_type || "flood"}
+          />
+        ) : view === "route" ? (
+          <RouteIntelligence zoneId={activeZoneId} incidentId={incidentId || ""} />
+        ) : view === "resources" ? (
+          <ResourcePanel zoneId={activeZoneId} incidentId={incidentId || ""} />
+        ) : view === "3d" ? (
+          <Suspense fallback={<Zone3DFallback />}>
+            <CriticalZone3D zoneId={activeZoneId} />
+          </Suspense>
+        ) : (
+          <div className="space-y-4">
+            <div className="ops-stat">
+              <div className="ops-stat-label">Victims detected</div>
+              <div className="ops-stat-value">{zoneDetails?.victim_count ?? "—"}</div>
+              <div className="mt-2 text-xs text-slate-400">
+                Radius {Math.round((zoneDetails?.radius_meters ?? 0) / 100) / 10} km ·{" "}
+                {zone?.disaster_type || "typed incident"}
+              </div>
+            </div>
+            <p className="text-sm leading-6 text-slate-400">
+              Use the tabs above to run what-if simulations, compute response routes,
+              review resource allocations, or open the digital twin in 3D.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

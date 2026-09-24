@@ -48,79 +48,70 @@ export const RouteIntelligence: React.FC<RouteIntelligenceProps> = ({
   }, [blockedRoads, zoneId]);
 
   return (
-    <div className="card p-6 max-w-md mx-auto">
-      <h2 className="text-2xl font-bold mb-4">Route Intelligence</h2>
-
-      {/* Blocked Roads Input */}
-      <div className="mb-4 p-4 bg-gray-800/50 rounded-lg">
-        <label className="block text-sm text-gray-300 mb-2">
-          Blocked Road(s) — enter road name(s) and reason (comma-separated):
+    <div>
+      <div className="ops-kicker mb-3">Route intelligence</div>
+      <div className="ops-panel-flat mb-4 p-4">
+        <label className="ops-stat-label mb-2 block" htmlFor="blocked-roads">
+          Blocked road(s) — road name and reason, comma-separated
         </label>
         <input
+          id="blocked-roads"
           value={blockedRoads}
           onChange={(e) => setBlockedRoads(e.target.value)}
           placeholder="e.g. Main Highway - landslide, Secondary Road - flooding"
-          className="w-full bg-gray-700 rounded py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="ops-input"
         />
       </div>
 
-      {/* Routes Display */}
       {routes && (
-        <div className="p-4 bg-gray-800/50 rounded-lg mb-4">
-          <h3 className="font-medium text-white mb-3">Route Options</h3>
+        <div className="ops-panel-flat mb-4 p-4">
+          <div className="ops-kicker mb-3">Route options</div>
 
-          {/* Primary Route */}
           {routes.primary_route && (
-            <div className="mb-3 p-3 bg-blue-800/30 rounded-lg">
-              <p className="font-medium text-blue-300">Primary Route</p>
-              <p className="text-sm text-gray-300">
-                Distance: {routes.primary_route.distance_km} km •
-                Estimated time: {routes.primary_route.estimated_minutes} min
+            <div className="ops-stat mb-3" style={{ minHeight: "auto" }}>
+              <div className="ops-badge ops-badge-cyan mb-2">Primary</div>
+              <p className="ops-mono text-sm text-slate-200">
+                {routes.primary_route.distance_km} km · {routes.primary_route.estimated_minutes} min
               </p>
-              <p className="text-xs text-gray-400">
-                Note: {routes.primary_route.note || "May be blocked"}
+              <p className="mt-1 text-xs text-slate-400">
+                {routes.primary_route.note || "May be blocked"}
               </p>
             </div>
           )}
 
-          {/* Alternate Routes */}
           {routes.alternate_routes && routes.alternate_routes.length > 0 && (
             <div>
-              <p className="font-medium text-white">Alternate Routes:</p>
+              <div className="mb-2 text-sm font-semibold text-white">Alternates</div>
               {routes.alternate_routes.map((alt, i) => (
-                <div key={i} className="mb-2 p-3 bg-gray-700/50 rounded-lg">
-                  <p className="font-semibold text-yellow-400">
-                    Alternate {i + 1}: {alt.estimated_minutes} min
-                  </p>
-                  <p className="text-xs text-gray-300">{alt.detour_reason}</p>
-                  <p className="text-xs text-gray-400">
-                    Distance: {alt.distance_km} km
-                  </p>
+                <div key={i} className="ops-list-item">
+                  <span className="ops-badge ops-badge-amber">Alt {i + 1}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="ops-mono block text-sm text-slate-200">
+                      {alt.estimated_minutes} min · {alt.distance_km} km
+                    </span>
+                    <span className="block text-xs text-slate-400">{alt.detour_reason}</span>
+                  </span>
                 </div>
               ))}
             </div>
           )}
 
-          {/* No routes if blocked but no alternates */}
-          {(!routes.alternate_routes || routes.alternate_routes.length === 0) &&
-            blockedRoads && (
-              <p className="text-sm text-yellow-400">
-                No alternate routes computed yet.
-              </p>
-            )}
+          {(!routes.alternate_routes || routes.alternate_routes.length === 0) && blockedRoads && (
+            <p className="text-sm text-[#f3b562]">No alternate routes computed yet.</p>
+          )}
         </div>
       )}
 
-      {/* Compute button */}
       {loading ? (
-        <p className="text-yellow-300">Computing routes...</p>
+        <p className="ops-mono text-sm text-[#f3b562]">Computing routes…</p>
       ) : (
         <button
+          type="button"
           onClick={computeRoutes}
           disabled={!blockedRoads.trim()}
-          className="w-full bg-orange-600 text-white font-medium rounded-lg py-2 disabled:opacity-50"
+          className="ops-button ops-button-primary w-full"
         >
-          Compute Alternate Routes
+          Compute alternate routes
         </button>
       )}
     </div>

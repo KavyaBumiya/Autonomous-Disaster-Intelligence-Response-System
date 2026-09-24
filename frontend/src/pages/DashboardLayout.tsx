@@ -5,6 +5,9 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { io, type Socket } from "socket.io-client";
 
+import { AppShell } from "@/components/AppShell";
+import { KPIStrip } from "@/components/KPIStrip";
+import { Button } from "@/components/ui";
 import { LiveIncidentsPanel } from "./LiveIncidentsPanel";
 import { RecentReportsPanel } from "./RecentReportsPanel";
 import { ResourcePanel } from "./ResourceStatusPanel";
@@ -20,16 +23,14 @@ import {
   type Incident,
   type Resource,
 } from "@/services/api";
+import { useSystemHealthStore } from "@/stores/systemHealthStore";
 
-const CriticalZone3D = lazy(() =>
-  import("./CriticalZone3D").then((m) => ({ default: m.CriticalZone3D }))
-);
 const OperationalMap = lazy(() =>
   import("@/components/OperationalMap").then((m) => ({ default: m.OperationalMap }))
 );
 
 const MapFallback = ({ label }: { label: string }) => (
-  <div className="ops-panel flex min-h-[380px] items-center justify-center p-6 text-center">
+  <div className="ops-panel flex min-h-[320px] items-center justify-center p-6 text-center">
     <div>
       <div className="ops-kicker mb-2">{label}</div>
       <div className="ops-title">Loading map engine…</div>
@@ -81,11 +82,13 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
     socket.on("connect", () => {
       setIsConnected(true);
+      useSystemHealthStore.getState().setRealtime("ONLINE");
       toast.success("Connected to AegisAI live feed");
     });
 
     socket.on("disconnect", () => {
       setIsConnected(false);
+      useSystemHealthStore.getState().setRealtime("DEGRADED");
       toast.warning("Disconnected from live feed. Reconnecting...");
       setTimeout(() => socket.connect(), 5000);
     });
@@ -304,86 +307,84 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   const headerItems = alerts.map((alert, index) => (
     <div
       key={`${alert.type}-${index}`}
-      className={`alert alert-${alert.type} mb-2 px-3 py-2 rounded text-sm`}
+      className={`ops-alert ops-alert-${alert.type} mb-2`}
+      role="status"
     >
-      {alert.message}
+      <span aria-hidden="true">
+        {alert.type === "critical" ? "▲" : alert.type === "warning" ? "△" : "ℹ"}
+      </span>
+      <span>{alert.message}</span>
     </div>
   ));
 
   return (
-    <div className="ops-shell text-white">
-      <header className="ops-nav sticky top-0 z-20">
-        <div className="ops-container nav-wide flex min-h-[74px] items-center justify-between gap-6">
-          <div className="flex items-center gap-4">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-[#38d9c4] text-lg font-bold text-[#07101c]">A</div>
-            <div>
-              <div className="text-lg font-bold tracking-tight">AegisAI <span className="font-normal text-slate-400">/ command</span></div>
-              <div className="ops-kicker">Autonomous disaster intelligence</div>
+    <AppShell isConnected={isConnected} alertCount={alerts.length}>
+      <section className="fade-in mb-6 flex flex-col justify-between gap-5 md:flex-row md:items-end">
+        <div>
+          <div className="ops-kicker mb-2">Live operations picture</div>
+          <h1 className="max-w-3xl text-3xl font-bold tracking-tight text-white md:text-4xl">
+            See the threat. <span className="text-[#38d9c4]">Move first.</span>
+          </h1>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
+            A decision surface for incident commanders. Every signal is ranked, explained, and ready for human approval.
+          </p>
+        </div>
+        <div className="ops-panel flex items-center gap-3 px-4 py-3">
+          <span
+            className={`h-2.5 w-2.5 rounded-full ${
+              isConnected
+                ? "bg-[#38d9c4] shadow-[0_0_14px_#38d9c4]"
+                : "bg-[#f3b562] shadow-[0_0_14px_#f3b562]"
+            }`}
+          />
+          <div>
+            <div className="ops-mono text-xs text-slate-300">SYSTEM MODE</div>
+            <div className="text-sm font-semibold">
+              {isConnected ? "Live intelligence" : "Offline fallback"}
             </div>
-            <BadgeConnectionStatus isConnected={isConnected} />
-          </div>
-          <div className="flex items-center gap-2">
-            <button className="ops-button" onClick={() => navigate("/command-center")}>Command center</button>
-            <button
-              className="ops-button"
-              onClick={() => setActiveHeatmap((h) => (h === "combined" ? null : "combined"))}
-            >
-              {effectiveActiveHeatmap === "combined" ? "Hide heatmap" : "Heatmap"}
-            </button>
-            <AlertsDropdown alerts={alerts} />
-            <button className="ops-button-primary rounded-lg px-4 py-2" onClick={() => navigate("/")}>Global feed</button>
           </div>
         </div>
-      </header>
+      </section>
 
-      <main className="ops-container py-8">
-        <section className="fade-in mb-7 flex flex-col justify-between gap-5 md:flex-row md:items-end">
-          <div>
-            <div className="ops-kicker mb-2">Live operations picture / 23 Sep 2026</div>
-            <h1 className="max-w-3xl text-3xl font-bold tracking-tight text-white md:text-5xl">See the threat. <span className="text-[#38d9c4]">Move first.</span></h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">A decision surface for incident commanders. Every signal is ranked, explained, and ready for human approval.</p>
-          </div>
-          <div className="ops-panel flex items-center gap-3 px-4 py-3">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#f3b562] shadow-[0_0_14px_#f3b562]" />
-            <div>
-              <div className="ops-mono text-xs text-slate-300">SYSTEM MODE</div>
-              <div className="text-sm font-semibold">{isConnected ? "Live intelligence" : "Offline fallback"}</div>
-            </div>
-          </div>
-        </section>
+      <KPIStrip
+        items={[
+          {
+            label: "Active incidents",
+            value: String(activeIncidentCount).padStart(2, "0"),
+            detail: (
+              <span className="text-[#ff6b6b]">
+                {activeIncidents.filter((i) => (i.priority_score || 0) > 70).length} need attention
+              </span>
+            ),
+          },
+          {
+            label: "People at risk",
+            value: peopleAtRisk.toLocaleString(),
+            detail: <span className="text-[#f3b562]">Detected across active zones</span>,
+          },
+          {
+            label: "Response readiness",
+            value: `${readiness}%`,
+            tone: "cyan",
+            progress: readiness,
+          },
+          {
+            label: "Actions awaiting approval",
+            value: String(pendingApprovals).padStart(2, "0"),
+            tone: "amber",
+            detail: "Commander review required",
+          },
+        ]}
+      />
 
-        <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <div className="ops-stat fade-in">
-            <div className="ops-stat-label">Active incidents</div>
-            <div className="ops-stat-value">{String(activeIncidentCount).padStart(2, "0")}</div>
-            <div className="mt-2 text-xs text-[#ff6b6b]">
-              {activeIncidents.filter((i) => (i.priority_score || 0) > 70).length} need attention
-            </div>
+      <section className="ops-panel mb-6 flex flex-col gap-4 p-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="ops-kicker mb-1">Focus area</div>
+          <div className="text-sm text-slate-300">
+            Choose an operational zone to filter every signal and recommendation.
           </div>
-          <div className="ops-stat fade-in">
-            <div className="ops-stat-label">People at risk</div>
-            <div className="ops-stat-value">{peopleAtRisk.toLocaleString()}</div>
-            <div className="mt-2 text-xs text-[#f3b562]">Detected across active zones</div>
-          </div>
-          <div className="ops-stat fade-in">
-            <div className="ops-stat-label">Response readiness</div>
-            <div className="ops-stat-value">{readiness}%</div>
-            <div className="ops-progress mt-2">
-              <span style={{ width: `${readiness}%` }} />
-            </div>
-          </div>
-          <div className="ops-stat fade-in">
-            <div className="ops-stat-label">Actions awaiting approval</div>
-            <div className="ops-stat-value text-[#f3b562]">{String(pendingApprovals).padStart(2, "0")}</div>
-            <div className="mt-2 text-xs text-slate-400">Commander review required</div>
-          </div>
-        </section>
-
-        <section className="ops-panel mb-6 flex flex-col gap-4 p-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="ops-kicker mb-1">Focus area</div>
-            <div className="text-sm text-slate-300">Choose an operational zone to filter every signal and recommendation.</div>
-          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
           <select
             aria-label="Select operational zone"
             value={activeZone || ""}
@@ -406,138 +407,132 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
               </option>
             ))}
           </select>
-          {zonesUnavailable && <div className="mt-2 text-xs text-[#f3b562]">{zoneErrorMessage}</div>}
-        </section>
+          <Button
+            variant={effectiveActiveHeatmap === "combined" ? "primary" : "default"}
+            onClick={() => setActiveHeatmap((h) => (h === "combined" ? null : "combined"))}
+          >
+            {effectiveActiveHeatmap === "combined" ? "Hide heatmap" : "Heatmap"}
+          </Button>
+          <Button onClick={() => navigate("/command")}>Command center</Button>
+        </div>
+        {zonesUnavailable && (
+          <div className="text-xs text-[#f3b562] md:w-full">{zoneErrorMessage}</div>
+        )}
+      </section>
 
-        {alerts.length > 0 && <div className="mb-5">{headerItems}</div>}
+      {alerts.length > 0 && <div className="mb-5">{headerItems}</div>}
 
-        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[280px_minmax(0,1fr)_330px]">
-          <div className="space-y-5">
-            <LiveIncidentsPanel selectedZone={activeZone} />
-            <RecentReportsPanel selectedZone={activeZone} />
-            <ResourcePanel zoneId={activeZone} />
-          </div>
+      <section className="ops-dashboard-grid">
+        <div className="ops-dashboard-left space-y-5">
+          <LiveIncidentsPanel selectedZone={activeZone} />
+          <RecentReportsPanel selectedZone={activeZone} />
+          <ResourcePanel zoneId={activeZone} compact />
+        </div>
 
-          <div className="space-y-5">
-            <div className="ops-panel ops-glow overflow-hidden">
-              <div className="ops-panel-header">
-                <div>
-                  <div className="ops-kicker">Operational map</div>
-                  <div className="ops-title">Threat landscape</div>
-                </div>
-                <span className="ops-mono text-xs text-slate-400">{effectiveHeatmapData ? "LIVE LAYER" : "SIMULATION"}</span>
+        <div className="ops-dashboard-main space-y-5">
+          <div className="ops-panel ops-glow overflow-hidden">
+            <div className="ops-panel-header">
+              <div>
+                <div className="ops-kicker">Operational map</div>
+                <div className="ops-title">Threat landscape</div>
               </div>
-              <Suspense fallback={<MapFallback label="Operational map" />}>
-                <OperationalMap
-                  zones={zones}
-                  selectedZone={activeZone}
-                  onSelectZone={(zoneId) => {
-                    setSelectedZone(zoneId);
-                    navigate(`/dashboard/${zoneId}`, { replace: true });
-                  }}
-                />
-              </Suspense>
+              <span className="ops-mono text-xs text-slate-400">
+                {effectiveHeatmapData ? "LIVE LAYER" : "SIMULATION"}
+              </span>
             </div>
-            {activeZone ? (
-              <ZoneDetail zoneId={activeZone} />
-            ) : (
-              <div className="ops-panel p-6">
-                <div className="ops-kicker mb-2">No zone selected</div>
-                <div className="ops-title mb-2">Your next decision starts here.</div>
-                <p className="text-sm leading-6 text-slate-400">
-                  Select a zone above to open incident reasoning, victim detection, route intelligence, and response actions.
-                </p>
-              </div>
-            )}
+            <Suspense fallback={<MapFallback label="Operational map" />}>
+              <OperationalMap
+                zones={zones}
+                selectedZone={activeZone}
+                onSelectZone={(zoneId) => {
+                  setSelectedZone(zoneId);
+                  navigate(`/dashboard/${zoneId}`, { replace: true });
+                }}
+              />
+            </Suspense>
           </div>
+          {activeZone ? (
+            <ZoneDetail zoneId={activeZone} />
+          ) : (
+            <div className="ops-panel p-6">
+              <div className="ops-kicker mb-2">No zone selected</div>
+              <div className="ops-title mb-2">Your next decision starts here.</div>
+              <p className="text-sm leading-6 text-slate-400">
+                Select a zone above to open incident reasoning, victim detection, route
+                intelligence, and response actions.
+              </p>
+            </div>
+          )}
+        </div>
 
-          <div className="space-y-5">
-            <div className="ops-panel p-5">
-              <div className="ops-kicker mb-2">Decision queue</div>
-              <div className="ops-title mb-4">Human approval gate</div>
-              <div className="space-y-3">
-                {(queueData?.actions ?? []).slice(0, 3).map((action) => (
-                  <button
-                    key={action.action_id}
-                    className="flex w-full items-center gap-3 rounded-lg border border-white/10 bg-white/[.03] p-3 text-left transition hover:border-[#38d9c4]/50"
+        <div className="ops-dashboard-right space-y-5">
+          <div className="ops-panel">
+            <div className="ops-panel-header">
+              <div>
+                <div className="ops-kicker">Decision queue</div>
+                <div className="ops-title">Human approval gate</div>
+              </div>
+            </div>
+            <div className="ops-panel-body space-y-3">
+              {(queueData?.actions ?? []).slice(0, 3).map((action) => (
+                <button
+                  key={action.action_id}
+                  className="flex w-full items-center gap-3 rounded-lg border border-white/10 bg-white/[.03] p-3 text-left transition hover:border-[#38d9c4]/50"
+                  onClick={() => navigate("/command")}
+                >
+                  <span
+                    className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold ${
+                      (action.priority_score || 0) > 70
+                        ? "bg-[#ff6b6b]/20 text-[#ff8b8b]"
+                        : "bg-[#f3b562]/20 text-[#f3b562]"
+                    }`}
                   >
-                    <span
-                      className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold ${
-                        (action.priority_score || 0) > 70
-                          ? "bg-[#ff6b6b]/20 text-[#ff8b8b]"
-                          : "bg-[#f3b562]/20 text-[#f3b562]"
-                      }`}
-                    >
-                      {action.priority_band?.charAt(0) || "!"}
-                    </span>
-                    <span className="text-sm text-slate-200">
+                    {action.priority_band?.charAt(0) || "!"}
+                  </span>
+                  <span className="min-w-0 flex-1 text-sm text-slate-200">
+                    <span className="ops-clamp-2 block">
                       {action.description?.slice(0, 60) || action.action_type}
-                      <small className="mt-1 block text-xs text-slate-500">
-                        Priority {(action.priority_score || 0).toFixed(0)}/100 · pending
-                      </small>
                     </span>
-                  </button>
-                ))}
-                {(queueData?.actions ?? []).length === 0 && (
-                  <p className="text-xs text-slate-500">No pending actions — queue is clear.</p>
-                )}
-              </div>
-              <button className="ops-button-primary mt-4 w-full rounded-lg" onClick={() => navigate("/command-center")}>
+                    <small className="mt-1 block text-xs text-slate-500">
+                      Priority {(action.priority_score || 0).toFixed(0)}/100 · pending
+                    </small>
+                  </span>
+                </button>
+              ))}
+              {(queueData?.actions ?? []).length === 0 && (
+                <p className="text-xs text-slate-500">No pending actions — queue is clear.</p>
+              )}
+              <Button variant="primary" block onClick={() => navigate("/command")}>
                 Review queue
-              </button>
+              </Button>
             </div>
-            {activeZone ? (
-              <Suspense fallback={<MapFallback label="3D zone view" />}>
-                <CriticalZone3D zoneId={activeZone} />
-              </Suspense>
-            ) : (
-              <div className="ops-panel p-5">
-                <div className="ops-kicker mb-2">3D zone view</div>
-                <div className="ops-title mb-2">Digital twin standby</div>
-                <p className="text-sm leading-6 text-slate-400">
-                  Select a critical zone to inspect terrain, structures, and rescue routes in 3D.
-                </p>
-              </div>
-            )}
           </div>
-        </section>
-      </main>
-    </div>
+
+          <div className="ops-panel">
+            <div className="ops-panel-header">
+              <div>
+                <div className="ops-kicker">3D zone view</div>
+                <div className="ops-title">Digital twin</div>
+              </div>
+            </div>
+            <div className="ops-panel-body">
+              <p className="mb-3 text-sm leading-6 text-slate-400">
+                {activeZone
+                  ? "Inspect terrain, structures, and rescue routes in an immersive 3D twin."
+                  : "Select a critical zone to inspect terrain, structures, and rescue routes in 3D."}
+              </p>
+              <Button
+                variant="primary"
+                block
+                disabled={!activeZone}
+                onClick={() => activeZone && navigate(`/3d/${activeZone}`)}
+              >
+                Open 3D view
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </AppShell>
   );
 };
-
-/* Badge for connection status */
-const BadgeConnectionStatus: React.FC<{ isConnected: boolean }> = ({ isConnected }) => (
-  <span
-    className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-      isConnected ? "bg-green-500" : "bg-red-500"
-    }`}
-  >
-    {isConnected ? "Online" : "Offline"}
-  </span>
-);
-
-/* Alerts Dropdown */
-const AlertsDropdown: React.FC<{ alerts: AlertItem[] }> = ({ alerts }) => (
-  <div
-    className="relative flex items-center gap-1"
-    title={alerts[0]?.message || "No new alerts"}
-    role="status"
-    aria-live="polite"
-  >
-    <svg className="w-5 h-5 text-yellow-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-      />
-    </svg>
-    <span className="hidden sm:block sm:ml-2">Alerts</span>
-    {alerts.length > 0 && (
-      <span className="grid h-5 min-w-5 place-items-center rounded-full bg-[#ff6b6b] px-1 text-[10px] font-bold text-white">
-        {alerts.length}
-      </span>
-    )}
-  </div>
-);

@@ -17,7 +17,6 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import {
@@ -30,6 +29,8 @@ import {
 import { ApprovalQueue }  from "@/components/ApprovalQueue";
 import { EvidencePanel }  from "@/components/EvidencePanel";
 import { SystemStatus }   from "@/components/SystemStatus";
+import { AppShell }       from "@/components/AppShell";
+import { useSystemHealth } from "@/hooks/useSystemHealth";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -71,7 +72,6 @@ const QUICK_ACTIONS = [
 // ── Component ─────────────────────────────────────────────────────────────
 
 export const CommandCenter: React.FC = () => {
-  const navigate     = useNavigate();
   const queryClient  = useQueryClient();
   const chatEndRef   = useRef<HTMLDivElement>(null);
   const inputRef     = useRef<HTMLInputElement>(null);
@@ -86,14 +86,11 @@ export const CommandCenter: React.FC = () => {
     () => `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
   );
 
-  // ── Groq health check ───────────────────────────────────────────────────
-  const { data: healthData } = useQuery({
-    queryKey: ["command-health"],
-    queryFn:  () => commandApi.health().then((r) => r.data),
-    refetchInterval: 30_000,
-    retry: false,
-  });
-  const groqOnline = healthData?.groq_available ?? false;
+  // ── Groq health (shared store — never conflates API vs AI) ─────────────
+  const systemHealth = useSystemHealth();
+  const groqOnline = systemHealth.groq === "ONLINE";
+  const groqStatus = systemHealth.groq;
+  const healthModel = systemHealth.groqModel;
 
   // ── Approval queue ──────────────────────────────────────────────────────
   const { data: queueData, refetch: refetchQueue } = useQuery({
@@ -165,8 +162,10 @@ export const CommandCenter: React.FC = () => {
   }, [messages]);
 
   const welcomeText = groqOnline
-    ? `Groq AI Gateway ready (${healthData?.model ?? "qwen/qwen3.8-27b"}). Ask anything about active incidents, resources, predictions, or routing.`
-    : "Running in offline mode — Groq AI unavailable. Deterministic engine and all data APIs are still operational. Type a query to see available data.";
+    ? `Groq AI Gateway ready (${healthModel ?? "qwen/qwen3.8-27b"}). Ask anything about active incidents, resources, predictions, or routing.`
+    : groqStatus === "UNKNOWN"
+      ? "Checking Groq AI Gateway… Core data APIs remain available."
+      : "Groq AI unavailable. Deterministic engine and all data APIs are still operational — incident data, priority scores, resources, and approvals remain online.";
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -200,67 +199,71 @@ export const CommandCenter: React.FC = () => {
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
-    <div className="ops-shell min-h-screen text-white">
-      {/* ── Nav ──────────────────────────────────────────────────────────── */}
-      <header className="ops-nav sticky top-0 z-20">
-        <div className="ops-container nav-wide flex min-h-[68px] items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate("/")}
-              className="grid h-9 w-9 place-items-center rounded-xl bg-[#38d9c4] text-sm font-bold text-[#07101c] transition hover:opacity-90"
-              aria-label="Back to dashboard"
-            >
-              ←
-            </button>
-            <div>
-              <div className="text-base font-bold tracking-tight">
-                AegisAI <span className="font-normal text-slate-400">/ command center</span>
-              </div>
-              <div className="ops-kicker">AI-assisted incident command</div>
-            </div>
-          </div>
+    <AppShell alertCount={pendingCount}>
+      <div className="fade-in mb-5">
+        <div className="ops-kicker mb-2">AI-assisted incident command</div>
+        <h1 className="text-3xl font-bold tracking-tight">Command center</h1>
+        <p className="mt-2 max-w-2xl text-sm text-slate-400">
+          Natural-language interface backed by the Groq AI Gateway. The LLM calls tools and
+          explains evidence — it never assigns priority or dispatches without your approval.
+        </p>
+      </div>
 
-          <div className="flex items-center gap-2">
-            {/* Pending approvals badge */}
-            {pendingCount > 0 && (
-              <button
-                onClick={() => setActivePanel("approvals")}
-                className="flex items-center gap-1.5 rounded-lg bg-[#f3b562]/20 px-3 py-1.5 text-xs font-semibold text-[#f3b562] transition hover:bg-[#f3b562]/30"
-              >
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#f3b562] opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-[#f3b562]" />
-                </span>
-                {pendingCount} pending approval{pendingCount !== 1 ? "s" : ""}
-              </button>
-            )}
-
-            <SystemStatus groqOnline={groqOnline} groqModel={healthData?.model} />
-          </div>
-        </div>
-      </header>
-
-      <div className="ops-container py-6">
-        {/* ── Panel tabs ──────────────────────────────────────────────── */}
-        <div className="mb-5 flex gap-1 rounded-xl border border-white/10 bg-white/[.03] p-1">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-1 rounded-xl border border-white/10 bg-white/[.03] p-1" role="tablist">
           {(["chat", "evidence", "approvals"] as const).map((panel) => (
             <button
               key={panel}
+              role="tab"
+              aria-selected={activePanel === panel}
               onClick={() => setActivePanel(panel)}
-              className={`flex-1 rounded-lg py-2 text-sm font-medium capitalize transition ${
-                activePanel === panel
-                  ? "bg-[#38d9c4] text-[#07101c]"
-                  : "text-slate-400 hover:text-white"
-              }`}
+              className={`ops-nav-link justify-center ${activePanel === panel ? "active" : ""}`}
             >
               {panel === "approvals"
-                ? `Human Approval Gate${pendingCount > 0 ? ` (${pendingCount})` : ""}`
+                ? `Human approval gate${pendingCount > 0 ? ` (${pendingCount})` : ""}`
                 : panel === "evidence"
-                ? "XAI Evidence"
-                : "AI Command"}
+                ? "XAI evidence"
+                : "AI command"}
             </button>
           ))}
         </div>
+
+        <div className="flex items-center gap-2">
+          {pendingCount > 0 && (
+            <button
+              onClick={() => setActivePanel("approvals")}
+              className="flex items-center gap-1.5 rounded-lg bg-[#f3b562]/20 px-3 py-1.5 text-xs font-semibold text-[#f3b562] transition hover:bg-[#f3b562]/30"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#f3b562] opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#f3b562]" />
+              </span>
+              {pendingCount} pending approval{pendingCount !== 1 ? "s" : ""}
+            </button>
+          )}
+          <SystemStatus />
+        </div>
+      </div>
+
+        {/* Groq degraded banner — core services stay usable with RETRY */}
+        {!groqOnline && groqStatus !== "UNKNOWN" && (
+          <div className="ops-alert ops-alert-warning mb-4 flex flex-wrap items-center gap-3" role="status">
+            <span aria-hidden="true">△</span>
+            <span className="text-sm">
+              <strong>AI advisory unavailable.</strong> Groq is offline — chat replies may use
+              deterministic fallback. Incident data, predictions, resources, and the approval
+              queue remain online.
+            </span>
+            <button
+              type="button"
+              className="ops-button ops-button-sm ml-auto shrink-0"
+              onClick={() => void systemHealth.refresh()}
+              disabled={systemHealth.checking}
+            >
+              {systemHealth.checking ? "Re-checking…" : "RETRY"}
+            </button>
+          </div>
+        )}
 
         {/* ── Chat panel ───────────────────────────────────────────────── */}
         {activePanel === "chat" && (
@@ -274,8 +277,16 @@ export const CommandCenter: React.FC = () => {
                     <div className="ops-kicker">Groq AI Gateway</div>
                     <div className="ops-title">Commander interface</div>
                   </div>
-                  <span className={`ops-mono text-xs ${groqOnline ? "text-[#38d9c4]" : "text-[#f3b562]"}`}>
-                    {groqOnline ? "● LIVE" : "○ OFFLINE"}
+                  <span
+                    className={`ops-mono text-xs ${
+                      groqOnline
+                        ? "text-[#38d9c4]"
+                        : groqStatus === "UNKNOWN"
+                          ? "text-slate-400"
+                          : "text-[#f3b562]"
+                    }`}
+                  >
+                    {groqOnline ? "● LIVE" : groqStatus === "UNKNOWN" ? "○ CHECKING" : "○ OFFLINE"}
                   </span>
                 </div>
 
@@ -324,7 +335,9 @@ export const CommandCenter: React.FC = () => {
                       placeholder={
                         groqOnline
                           ? "Ask anything — incidents, resources, predictions, routes…"
-                          : "Groq offline — queries will use deterministic fallback"
+                          : groqStatus === "UNKNOWN"
+                            ? "Checking AI gateway…"
+                            : "Groq offline — queries will use deterministic fallback"
                       }
                       disabled={sendMutation.isPending}
                       className="flex-1 rounded-lg border border-white/10 bg-white/[.05] px-3 py-2 text-sm text-white placeholder-slate-500 outline-none transition focus:border-[#38d9c4]/60 focus:ring-1 focus:ring-[#38d9c4]/30 disabled:opacity-50"
@@ -424,8 +437,7 @@ export const CommandCenter: React.FC = () => {
             onRefresh={refetchQueue}
           />
         )}
-      </div>
-    </div>
+    </AppShell>
   );
 };
 

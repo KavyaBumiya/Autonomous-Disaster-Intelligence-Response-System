@@ -1,7 +1,9 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 
 import { incidentsApi, type Incident } from "@/services/api";
+import { Badge, EmptyState, LoadingState, PriorityBadge } from "@/components/ui";
 
 interface LiveIncidentsPanelProps {
   selectedZone: string | null;
@@ -10,7 +12,8 @@ interface LiveIncidentsPanelProps {
 export const LiveIncidentsPanel: React.FC<LiveIncidentsPanelProps> = ({
   selectedZone,
 }) => {
-  const { data: incidents = [], isLoading } = useQuery<Incident[]>({
+  const navigate = useNavigate();
+  const { data: incidents = [], isLoading, isError } = useQuery<Incident[]>({
     queryKey: ["incidents", selectedZone],
     queryFn: async () => {
       const res = selectedZone
@@ -22,31 +25,45 @@ export const LiveIncidentsPanel: React.FC<LiveIncidentsPanelProps> = ({
   });
 
   return (
-    <div className="p-4 bg-gray-800/50 rounded-lg h-fit">
-      <h3 className="font-medium text-white mb-3">Active Incidents</h3>
-      {isLoading ? (
-        <p className="text-sm text-gray-400">Loading...</p>
-      ) : incidents.length === 0 ? (
-        <p className="text-sm text-gray-400">No active incidents</p>
-      ) : (
-        <div className="space-y-2 text-sm">
-          {incidents.map((inc) => (
-            <div key={inc.incident_id} className="p-3 bg-gray-700/50 rounded-lg">
-              <div className="font-medium text-white">
-                {inc.disaster_type || "Unknown"}
-                {inc.priority_score ? ` ${inc.priority_score}/100` : ""}
-                {inc.priority_band ? ` (${inc.priority_band})` : ""}
-              </div>
-              <div className="text-xs text-gray-300">
-                Zone: {inc.zone_id || "N/A"} · Victims: {inc.victim_count || 0}{" "}
-                · Status: {inc.status || "active"}
-                {inc.lat != null && inc.lng != null &&
-                  ` | ${inc.lat.toFixed(4)}, ${inc.lng.toFixed(4)}`}
-              </div>
-            </div>
-          ))}
+    <div className="ops-panel">
+      <div className="ops-panel-header">
+        <div>
+          <div className="ops-kicker">Live</div>
+          <div className="ops-title-sm">Active incidents</div>
         </div>
-      )}
+        <Badge tone={incidents.length ? "red" : "slate"}>
+          {incidents.length} open
+        </Badge>
+      </div>
+      <div className="ops-scroll-y" style={{ maxHeight: 280 }}>
+        {isLoading ? (
+          <LoadingState label="Loading incidents…" />
+        ) : isError ? (
+          <EmptyState title="Unavailable" message="Could not load incidents." />
+        ) : incidents.length === 0 ? (
+          <EmptyState title="All clear" message="No active incidents in this view." />
+        ) : (
+          incidents.map((inc) => (
+            <button
+              key={inc.incident_id}
+              type="button"
+              className="ops-list-item w-full text-left"
+              onClick={() => navigate(`/incidents/${inc.incident_id}`)}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="ops-truncate block text-sm font-semibold text-white">
+                  {inc.disaster_type || "Unknown"}
+                </span>
+                <span className="ops-mono mt-1 block text-xs text-slate-400">
+                  {inc.zone_id?.slice(0, 8) || "—"} · {inc.victim_count || 0} victims ·{" "}
+                  {inc.status || "active"}
+                </span>
+              </span>
+              <PriorityBadge score={inc.priority_score} band={inc.priority_band} />
+            </button>
+          ))
+        )}
+      </div>
     </div>
   );
 };

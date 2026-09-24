@@ -2,11 +2,14 @@ import React, { useEffect, useMemo, useRef } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Zone } from "@/services/api";
+import { useSystemHealthStore } from "@/stores/systemHealthStore";
 
 interface OperationalMapProps {
   zones: Zone[];
   selectedZone: string | null;
   onSelectZone: (zoneId: string) => void;
+  /** Optional CSS height override (e.g. compact panel map). */
+  height?: string;
 }
 
 const DEFAULT_CENTER: [number, number] = [73.1812, 22.3072];
@@ -15,11 +18,18 @@ export const OperationalMap: React.FC<OperationalMapProps> = ({
   zones,
   selectedZone,
   onSelectZone,
+  height,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const hasToken = Boolean(import.meta.env.VITE_MAPBOX_TOKEN && import.meta.env.VITE_MAPBOX_TOKEN !== "your_mapbox_access_token_here");
+  const mapHeight = height || "clamp(340px, 52vh, 640px)";
+
+  useEffect(() => {
+    const setMaps = useSystemHealthStore.getState().setMaps;
+    setMaps(hasToken ? "ONLINE" : "DEGRADED");
+  }, [hasToken]);
 
   const validZones = useMemo(
     () => zones.filter((zone) => Number.isFinite(zone.centroid_lat) && Number.isFinite(zone.centroid_lng)),
@@ -85,7 +95,7 @@ export const OperationalMap: React.FC<OperationalMapProps> = ({
 
   if (!hasToken) {
     return (
-      <div className="ops-map flex min-h-[380px] items-center justify-center p-8 text-center">
+      <div className="ops-map flex items-center justify-center p-8 text-center" style={{ height: mapHeight }}>
         <div className="max-w-md">
           <div className="ops-kicker mb-2">Map configuration required</div>
           <div className="ops-title mb-2">Add a Mapbox public token</div>
@@ -95,5 +105,12 @@ export const OperationalMap: React.FC<OperationalMapProps> = ({
     );
   }
 
-  return <div ref={containerRef} className="h-[440px] w-full" aria-label="Live operational map" />;
+  return (
+    <div
+      ref={containerRef}
+      className="w-full"
+      style={{ height: mapHeight }}
+      aria-label="Live operational map"
+    />
+  );
 };

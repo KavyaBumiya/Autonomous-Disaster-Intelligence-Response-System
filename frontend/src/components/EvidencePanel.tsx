@@ -21,6 +21,7 @@ import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { incidentsApi, commandApi, apiErrorMessage, type Incident } from "@/services/api";
 import { toast } from "sonner";
+import { useSystemHealth } from "@/hooks/useSystemHealth";
 
 // ── Priority display helpers ──────────────────────────────────────────────
 
@@ -62,6 +63,8 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
   const [selectedId, setSelectedId] = useState<string | null>(incidentId);
   const [explaining, setExplaining] = useState(false);
   const [explanation, setExplanation] = useState<string | null>(null);
+  const { groq: groqStatus } = useSystemHealth();
+  const groqOffline = groqStatus === "OFFLINE" || groqStatus === "DEGRADED";
 
   // Load active incidents for the selector
   const { data: incidentListData } = useQuery({
@@ -204,12 +207,23 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
                 {/* Ask Groq to explain */}
                 <button
                   onClick={handleExplain}
-                  disabled={explaining}
+                  disabled={explaining || groqOffline}
+                  title={
+                    groqOffline
+                      ? "AI Explain requires Groq. Deterministic evidence below remains available."
+                      : undefined
+                  }
                   className="ops-button-primary shrink-0 rounded-lg px-4 py-2 text-sm disabled:opacity-40"
                 >
-                  {explaining ? "Explaining…" : "✦ AI Explain"}
+                  {explaining ? "Explaining…" : groqOffline ? "AI Explain unavailable" : "✦ AI Explain"}
                 </button>
               </div>
+              {groqOffline && (
+                <div className="mt-3 rounded-lg border border-[#f3b562]/30 bg-[#f3b562]/10 px-3 py-2 text-xs text-[#f3b562]">
+                  Groq AI unavailable. Factor breakdown, deterministic XAI, and field reports
+                  remain online.
+                </div>
+              )}
             </div>
 
             {/* PRD §8 factor breakdown */}

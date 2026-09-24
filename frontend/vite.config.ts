@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "url";
@@ -12,6 +13,10 @@ export default defineConfig({
     alias: {
       "@": join(__dirname, "src"),
     },
+  },
+  test: {
+    environment: "node",
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
   },
   server: {
     host: "0.0.0.0",

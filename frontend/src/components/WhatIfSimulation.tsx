@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { toast } from "sonner";
 import { predictionsApi, apiErrorMessage } from "@/services/api";
+import { Button } from "@/components/ui";
 
 interface WhatIfSimulationProps {
   zoneId: string;
@@ -23,8 +24,7 @@ export const WhatIfSimulation: React.FC<WhatIfSimulationProps> = ({
   zoneId,
   disasterType,
 }) => {
-  const [showFloodTab, setShowFloodTab] = useState(true);
-  const [showFireTab, setShowFireTab] = useState(false);
+  const [scenario, setScenario] = useState<"flood" | "fire">("flood");
   const [rainfall, setRainfall] = useState(50);
   const [windSpeed, setWindSpeed] = useState(20);
   const [resourceDelta, setResourceDelta] = useState(0);
@@ -36,7 +36,7 @@ export const WhatIfSimulation: React.FC<WhatIfSimulationProps> = ({
     try {
       const res = await predictionsApi.whatIf({
         zone_id: zoneId,
-        disaster_type: showFireTab ? "fire" : disasterType,
+        disaster_type: scenario === "fire" ? "fire" : disasterType,
         rainfall_mm_hr: rainfall,
         wind_speed_kmh: windSpeed,
         resource_delta: resourceDelta,
@@ -48,159 +48,128 @@ export const WhatIfSimulation: React.FC<WhatIfSimulationProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [zoneId, rainfall, windSpeed, resourceDelta, disasterType, showFireTab]);
+  }, [zoneId, rainfall, windSpeed, resourceDelta, disasterType, scenario]);
 
   return (
-    <div className="card p-6 max-w-2xl mx-auto">
-      <h2 className="text-2xl font-bold mb-4">What-If Simulation</h2>
-
-      <div className="grid grid-cols-2 gap-2 mb-4">
+    <div>
+      <div className="mb-4 flex gap-1 rounded-lg border border-[var(--line)] bg-white/[.03] p-1" role="tablist">
         <button
-          onClick={() => { setShowFloodTab(true); setShowFireTab(false); }}
-          className={showFloodTab ? "bg-blue-600 text-white rounded-lg py-2 px-4 text-sm font-medium" : "bg-gray-700 text-gray-300 rounded-lg py-2 px-4 text-sm font-medium"}
+          role="tab"
+          aria-selected={scenario === "flood"}
+          onClick={() => setScenario("flood")}
+          className={`ops-nav-link flex-1 justify-center ${scenario === "flood" ? "active" : ""}`}
         >
-          Flood Scenario
+          Flood scenario
         </button>
         <button
-          onClick={() => { setShowFireTab(true); setShowFloodTab(false); }}
-          className={showFireTab ? "bg-blue-600 text-white rounded-lg py-2 px-2 text-sm font-medium" : "bg-gray-700 text-gray-300 rounded-lg py-2 px-2 text-sm font-medium"}
+          role="tab"
+          aria-selected={scenario === "fire"}
+          onClick={() => setScenario("fire")}
+          className={`ops-nav-link flex-1 justify-center ${scenario === "fire" ? "active" : ""}`}
         >
-          Fire Scenario
+          Fire scenario
         </button>
       </div>
 
-      {/* Flood Tab */}
-      {showFloodTab && (
-        <div className="p-4 bg-gray-800/50 rounded-lg mb-4">
-          <h3 className="font-medium text-white mb-3">Flood Parameters</h3>
-          <div className="grid grid-cols-2 gap-3">
+      <div className="ops-panel-flat mb-4 p-4">
+        <div className="ops-kicker mb-3">
+          {scenario === "flood" ? "Flood parameters" : "Fire parameters"}
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {scenario === "flood" ? (
             <div>
-              <label className="text-sm text-gray-300">Rainfall (mm/hr)</label>
+              <label className="ops-stat-label" htmlFor="rainfall">
+                Rainfall (mm/hr)
+              </label>
               <input
+                id="rainfall"
                 type="range"
                 min="0"
                 max="200"
                 step="5"
                 value={rainfall}
                 onChange={(e) => setRainfall(parseFloat(e.target.value))}
-                className="w-full bg-gray-700 rounded h-2 accent-blue-600"
+                className="mt-2 w-full accent-[#38d9c4]"
               />
-              <div className="text-xs text-gray-400 mt-1">
-                {rainfall.toFixed(1)} mm/hr
+              <div className="ops-mono mt-1 text-xs text-slate-400">{rainfall.toFixed(0)} mm/hr</div>
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="ops-stat-label" htmlFor="wind">
+                  Wind speed (km/h)
+                </label>
+                <input
+                  id="wind"
+                  type="range"
+                  min="0"
+                  max="200"
+                  step="5"
+                  value={windSpeed}
+                  onChange={(e) => setWindSpeed(parseFloat(e.target.value))}
+                  className="mt-2 w-full accent-[#ff6b6b]"
+                />
+                <div className="ops-mono mt-1 text-xs text-slate-400">{windSpeed.toFixed(0)} km/h</div>
               </div>
-            </div>
-          </div>
-          <button
-            onClick={runSimulation}
-            disabled={loading}
-            className="mt-3 w-full bg-blue-600 text-white font-medium rounded-lg py-2 disabled:opacity-50"
-          >
-            {loading ? "Simulating..." : "Run Flood Simulation"}
-          </button>
-        </div>
-      )}
-
-      {/* Fire Tab */}
-      {showFireTab && (
-        <div className="p-4 bg-gray-800/50 rounded-lg mb-4">
-          <h3 className="font-medium text-white mb-3">Fire Parameters</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm text-gray-300">Wind Speed (km/h)</label>
-              <input
-                type="range"
-                min="0"
-                max="200"
-                step="5"
-                value={windSpeed}
-                onChange={(e) => setWindSpeed(parseFloat(e.target.value))}
-                className="w-full bg-gray-700 rounded h-2 accent-red-600"
-              />
-              <div className="text-xs text-gray-400 mt-1">
-                {windSpeed.toFixed(1)} km/h
+              <div>
+                <label className="ops-stat-label" htmlFor="resdelta">
+                  Resource delta
+                </label>
+                <select
+                  id="resdelta"
+                  value={resourceDelta}
+                  onChange={(e) => setResourceDelta(parseInt(e.target.value, 10))}
+                  className="ops-select mt-2"
+                >
+                  <option value="-3">-3 resources (higher priority)</option>
+                  <option value="-1">-1 resource</option>
+                  <option value="0">No change</option>
+                  <option value="1">+1 resource</option>
+                  <option value="3">+3 resources (lower priority)</option>
+                </select>
               </div>
-            </div>
-            <div>
-              <label className="text-sm text-gray-300">Resource Delta</label>
-              <select
-                value={resourceDelta}
-                onChange={(e) => setResourceDelta(parseInt(e.target.value))}
-                className="w-full bg-gray-700 rounded py-2 text-sm"
-              >
-                <option value="-3">-3 Resources (higher priority)</option>
-                <option value="-1">-1 Resource</option>
-                <option value="0">No change</option>
-                <option value="1">+1 Resource</option>
-                <option value="3">+3 Resources (lower priority)</option>
-              </select>
-            </div>
-          </div>
-          <button
-            onClick={runSimulation}
-            disabled={loading}
-            className="mt-3 w-full bg-red-600 text-white font-medium rounded-lg py-2 disabled:opacity-50"
-          >
-            {loading ? "Simulating..." : "Run Fire Simulation"}
-          </button>
+            </>
+          )}
         </div>
-      )}
+        <Button
+          variant="primary"
+          block
+          className="mt-4"
+          onClick={runSimulation}
+          disabled={loading || !zoneId}
+        >
+          {loading ? "Simulating…" : scenario === "flood" ? "Run flood simulation" : "Run fire simulation"}
+        </Button>
+      </div>
 
-      {/* Results */}
       {simulationResult && (
-        <div className="mt-6 p-4 bg-gray-800/50 rounded-lg">
-          <h3 className="font-medium text-white mb-3">
-            Results — {simulationResult.disaster_type?.toUpperCase()}
-          </h3>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <span className="text-gray-400">Base Priority:</span>
-              <span className="font-bold text-yellow-400">
+        <div className="ops-panel-flat p-4">
+          <div className="ops-kicker mb-3">Results — {simulationResult.disaster_type?.toUpperCase()}</div>
+          <div className="ops-kpi-grid mb-3" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+            <div className="ops-stat" style={{ minHeight: 88 }}>
+              <div className="ops-stat-label">Base priority</div>
+              <div className="ops-stat-value" style={{ fontSize: 22 }}>
                 {simulationResult.base_prediction?.priority_base || "N/A"}
-              </span>
+              </div>
             </div>
-            <div>
-              <span className="text-gray-400">Adjusted Priority:</span>
-              <span className="font-bold text-green-400">
-                {simulationResult.new_priority}
-              </span>
+            <div className="ops-stat" style={{ minHeight: 88 }}>
+              <div className="ops-stat-label">Adjusted priority</div>
+              <div className="ops-stat-value text-[#38d9c4]" style={{ fontSize: 22 }}>
+                {simulationResult.new_priority ?? "—"}
+              </div>
             </div>
           </div>
-
-          <p className="text-xs text-gray-300 mt-2">
-            {simulationResult.description}
-          </p>
-
-          {/* Affected cells / burned area summary */}
-          {simulationResult.adjusted_prediction && simulationResult.adjusted_prediction.affected_cells
-            ? (
-              <div>
-                <span className="text-gray-400">Affected cells:</span>
-                <span className="font-bold text-white">
-                  {simulationResult.adjusted_prediction.affected_cells.length}
-                </span>
-              </div>
-            )
-            : (
-              <div>
-                <span className="text-gray-400">Affected cells:</span>
-                <span className="font-bold text-white">0</span>
-              </div>
-            )}
-          {simulationResult.adjusted_prediction && simulationResult.adjusted_prediction.max_intensity
-            ? (
-              <div>
-                <span className="text-gray-400">Max intensity:</span>
-                <span className="font-bold text-yellow-400">
-                  {simulationResult.adjusted_prediction.max_intensity}
-                </span>
-              </div>
-            )
-            : (
-              <div>
-                <span className="text-gray-400">Max intensity:</span>
-                <span className="font-bold text-yellow-400">0</span>
-              </div>
-            )}
+          <p className="text-xs leading-5 text-slate-400">{simulationResult.description}</p>
+          <div className="ops-mono mt-3 flex flex-wrap gap-4 text-xs text-slate-300">
+            <span>
+              Affected cells:{" "}
+              <strong>{simulationResult.adjusted_prediction?.affected_cells?.length ?? 0}</strong>
+            </span>
+            <span>
+              Max intensity:{" "}
+              <strong>{simulationResult.adjusted_prediction?.max_intensity ?? 0}</strong>
+            </span>
+          </div>
         </div>
       )}
     </div>
