@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
@@ -59,12 +60,50 @@ async def lifespan(app: FastAPI):
 
 
 # ── FastAPI app ───────────────────────────────────────────────
+class GetWithHeadRoute(APIRoute):
+    """APIRoute that also accepts HEAD whenever GET is allowed.
+
+    FastAPI's APIRoute does not auto-add HEAD (unlike Starlette's Route),
+    so health checkers probing HEAD / get 405 without this.
+    """
+
+    def __init__(self, path: str, endpoint, **kwargs):
+        methods = kwargs.get("methods")
+        if methods:
+            normalized = {str(m).upper() for m in methods}
+            if "GET" in normalized:
+                normalized.add("HEAD")
+                kwargs["methods"] = sorted(normalized)
+        super().__init__(path, endpoint, **kwargs)
+
+
 app = FastAPI(
     title="AegisAI API",
     description="AI-powered disaster intelligence & response platform",
     version="1.0.0",
     lifespan=lifespan,
 )
+app.router.route_class = GetWithHeadRoute
+
+
+def _enable_head_on_get_routes(routes) -> None:
+    """Ensure every registered GET APIRoute also allows HEAD.
+
+    include_router preserves each sub-router's route class, so routes pulled
+    in from APIRouter modules still need a post-registration pass.
+    """
+    for route in routes:
+        if isinstance(route, APIRoute):
+            methods = route.methods
+            if methods and "GET" in methods:
+                methods.add("HEAD")
+        children = getattr(route, "routes", None)
+        if children:
+            _enable_head_on_get_routes(children)
+        original = getattr(route, "original_router", None)
+        if original is not None and hasattr(original, "routes"):
+            _enable_head_on_get_routes(original.routes)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -121,6 +160,9 @@ app.include_router(heatmaps.router,    tags=["heatmaps"])
 @app.get("/api/health", tags=["health"])
 async def health():
     return {"status": "ok", "version": "1.0.0"}
+
+
+_enable_head_on_get_routes(app.routes)
 
 
 # ── Socket.IO ASGI mount ──────────────────────────────────────

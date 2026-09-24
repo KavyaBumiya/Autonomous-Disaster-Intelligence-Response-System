@@ -37,6 +37,27 @@ def test_api_health(client: TestClient):
     assert r.json() == {"status": "ok", "version": "1.0.0"}
 
 
+def test_root_get_and_head(client: TestClient):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.json()["message"] == "AegisAI API"
+    h = client.head("/")
+    assert h.status_code == 200
+    assert h.content == b""
+
+
+def test_health_head(client: TestClient):
+    h = client.head("/api/health")
+    assert h.status_code == 200
+    assert h.content == b""
+
+
+def test_api_root_head(client: TestClient):
+    h = client.head("/api")
+    assert h.status_code == 200
+    assert h.content == b""
+
+
 def test_docs_and_openapi(client: TestClient):
     assert client.get("/docs").status_code == 200
     spec = client.get("/openapi.json")
