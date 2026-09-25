@@ -105,6 +105,17 @@ class Settings(BaseSettings):
     mapbox_access_token:     str = ""
     nominatim_user_agent:    str = "AegisAI/1.0"
 
+    # ── NASA (api.nasa.gov Open APIs + EONET event catalog) ───────────────
+    # NASA_API_KEY: developer key for api.nasa.gov services (default limit
+    #   1,000 req/h). Server-side only — never in Vercel or responses.
+    # EONET (eonet.gsfc.nasa.gov/api/v3) is open and keyless; the key is
+    #   forwarded only when set (EONET tolerates the extra param).
+    # NOTE: this is NOT Earthdata/CMR authentication (separate ecosystem).
+    nasa_api_key:               str = ""
+    nasa_api_base:              str = "https://api.nasa.gov"
+    eonet_base_url:             str = "https://eonet.gsfc.nasa.gov/api/v3"
+    eonet_poll_interval_minutes: int = 10
+
     # ── Evidence fusion (PRD §15 — optional 7th priority factor) ─────────
     # 0.0 (default) keeps the PRD 6-factor formula unchanged; raise
     # (e.g. 0.05) to let fused external evidence nudge the score.

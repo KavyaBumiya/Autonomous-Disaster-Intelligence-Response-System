@@ -23,6 +23,7 @@ async def start_scheduler() -> None:
     from app.pollers.weather import poll_weather  # type: ignore
     from app.pollers.seismic import poll_seismic  # type: ignore
     from app.pollers.social import poll_social  # type: ignore
+    from app.pollers.eonet import poll_eonet  # type: ignore
 
     _scheduler.add_job(
         poll_weather,
@@ -51,12 +52,22 @@ async def start_scheduler() -> None:
         max_instances=1,
     )
 
+    _scheduler.add_job(
+        poll_eonet,
+        trigger=IntervalTrigger(minutes=settings.eonet_poll_interval_minutes),
+        id="eonet_poller",
+        name="NASA EONET natural-event poller",
+        replace_existing=True,
+        max_instances=1,
+    )
+
     _scheduler.start()
     logger.info(
         "Pollers scheduled",
         weather_interval="5min",
         seismic_interval="2min",
         social_interval=f"{settings.social_poll_interval_seconds}s",
+        eonet_interval=f"{settings.eonet_poll_interval_minutes}min",
     )
 
 

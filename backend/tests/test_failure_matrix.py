@@ -93,10 +93,14 @@ def test_canonical_statuses_worst_wins():
     registry.record_failure("nominatim", "timeout")
 
     canon = registry.canonical_statuses()
-    assert set(canon) == {"weather", "seismic", "gis", "routing", "geocoding", "groq"}
+    assert set(canon) == {
+        "weather", "seismic", "gis", "routing", "geocoding", "groq",
+        "natural_events",
+    }
     assert canon["weather"] == "ONLINE"
     assert canon["geocoding"] == "OFFLINE"   # failure, no prior success
     assert canon["seismic"] == "UNKNOWN"     # never probed
+    assert canon["natural_events"] == "UNKNOWN"  # EONET never probed
 
 
 def test_snapshot_reports_circuit_field():
@@ -345,7 +349,8 @@ def test_health_canonical_provider_keys_and_services():
             body = await health()
         assert body["status"] == "ok"
         assert body["reasons"] == []
-        for key in ("weather", "seismic", "gis", "routing", "geocoding", "groq"):
+        for key in ("weather", "seismic", "gis", "routing", "geocoding", "groq",
+                    "natural_events"):
             assert key in body["providers"], key
             assert body["providers"][key]["status"] in (
                 "ONLINE", "DEGRADED", "OFFLINE", "UNKNOWN",

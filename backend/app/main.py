@@ -21,7 +21,7 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, Base, engine
 from app.services.websocket import sio
 from app.pollers.scheduler import start_scheduler, stop_scheduler
-from app.api import reports, incidents, zones, actions, auth, resources, predictions, command, phase2, heatmaps, routes, earthquakes, weather
+from app.api import reports, incidents, zones, actions, auth, resources, predictions, command, phase2, heatmaps, routes, earthquakes, weather, nasa
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -243,6 +243,7 @@ app.include_router(command.router,     tags=["command center"])  # prefix alread
 app.include_router(phase2.router,      tags=["phase 2 intelligence"])
 app.include_router(heatmaps.router,    tags=["heatmaps"])
 app.include_router(weather.router,     prefix="/api/weather", tags=["weather"])
+app.include_router(nasa.router,        prefix="/api/nasa",    tags=["nasa"])
 
 
 async def _database_ping() -> None:

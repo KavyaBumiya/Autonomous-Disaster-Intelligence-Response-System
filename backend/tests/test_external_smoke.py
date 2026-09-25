@@ -61,3 +61,14 @@ async def test_overpass_live():
         "road", "bridge", "hospital", "clinic", "shelter",
         "school", "waterway", "building",
     ) for o in obs)
+
+
+async def test_eonet_live():
+    from app.integrations.nasa.eonet import EonetConnector, normalize_event
+
+    data = await EonetConnector().events(status="open", limit=5)
+    assert isinstance(data.get("events"), list)
+    assert data["events"], "EONET should have open natural events"
+    normalized = [n for e in data["events"] if (n := normalize_event(e)) is not None]
+    assert normalized, "expected at least one normalizable event"
+    assert all(n["title"] and n["category"] for n in normalized)

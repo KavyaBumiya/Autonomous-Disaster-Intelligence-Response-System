@@ -183,6 +183,7 @@ CONTRACT_ENDPOINTS: dict[str, set[str]] = {
     "/api/heatmaps/victim-density": {"GET"},
     "/api/incidents": {"GET"},
     "/api/incidents/{incident_id}": {"GET"},
+    "/api/nasa/eonet/events": {"GET"},
     "/api/phase2/behaviour/assess": {"POST"},
     "/api/phase2/models": {"GET"},
     "/api/phase2/models/{model_name}": {"GET"},

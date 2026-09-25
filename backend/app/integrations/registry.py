@@ -38,6 +38,7 @@ CANONICAL_GROUPS: dict[str, tuple[str, ...]] = {
     "routing": ("osrm",),
     "geocoding": ("nominatim",),
     "groq": ("groq",),
+    "natural_events": ("nasa/eonet",),
 }
 
 _STATUS_RANK = {"ONLINE": 0, "UNKNOWN": 1, "DEGRADED": 2, "OFFLINE": 3}

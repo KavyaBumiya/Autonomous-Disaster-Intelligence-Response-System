@@ -175,6 +175,24 @@ async def main() -> int:
         hp = r.json() if r.status_code == 200 else None
         check("priority.heatmap", r.status_code == 200 and hp is not None, f"HTTP {r.status_code}")
 
+        # 8b. NASA EONET natural events (poller ingest → domain read)
+        try:
+            from app.pollers.eonet import poll_eonet
+
+            await poll_eonet()  # ensure fresh ingestion for this smoke run
+            eonet_ok = True
+        except Exception as exc:
+            eonet_ok = False
+            check("nasa.eonet_ingest", False, f"{type(exc).__name__}: {exc}")
+        if eonet_ok:
+            r = await c.get("/api/nasa/eonet/events", headers=H,
+                            params={"limit": 10})
+            ne = r.json() if r.status_code == 200 else {}
+            evs = ne.get("events") or []
+            check("nasa.eonet_events",
+                  r.status_code == 200 and ne.get("source") == "nasa_eonet" and evs,
+                  f"count={ne.get('count')} first={evs[0]['title'][:40] if evs else None}")
+
         # 9. approval gate — seed a severe scenario (values a production
         #    poller + Detection/CV agents would write), re-run the actual
         #    Decision Engine, then commander approves through the API.
