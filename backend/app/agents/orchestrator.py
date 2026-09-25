@@ -30,6 +30,9 @@ from app.models.incident import Incident
 from app.models.agent_output import AgentOutput as AgentOutputModel
 from app.models.report import Report
 from app.models.zone import Zone
+from app.services.geocoding import geocode
+from app.services import gis_service
+from app.services.clustering import find_cluster_incident
 from app.services.websocket import (
     emit_new_report,
     emit_trust_score_updated,
@@ -56,6 +59,24 @@ async def process_report(report: Report, db: AsyncSession) -> None:
     # ── Step 1: Groq report parsing (best-effort, never blocks pipeline) ──
     await _enrich_with_groq(report)
 
+    # ── Step 1b: Geocode fallback (Nominatim) when only text location ────
+    if (not report.lat or not report.lng) and (report.location_string or "").strip():
+        try:
+            hit = await geocode(report.location_string.strip())
+            if hit and hit.get("lat") is not None and hit.get("lng") is not None:
+                report.lat = float(hit["lat"])
+                report.lng = float(hit["lng"])
+                report.geocoding_confidence = hit.get("confidence")
+                await db.flush()
+                logger.info(
+                    "report_geocoded",
+                    report_id=report.id,
+                    location=report.location_string,
+                    provider="nominatim",
+                )
+        except Exception as geo_exc:  # enrichment — pipeline continues either way
+            logger.warning("geocode_failed", report_id=report.id, error=str(geo_exc))
+
     # ── No location → skip spatial pipeline, still emit raw event ─────────
     if not report.lat or not report.lng:
         logger.debug("No location — skipping spatial pipeline", report_id=report.id)
@@ -76,10 +97,15 @@ async def process_report(report: Report, db: AsyncSession) -> None:
     # ── Step 2: Zone upsert ────────────────────────────────────────────────
     zone           = await _upsert_zone(report, db)
     report.zone_id = zone.id
+    await gis_service.set_report_geometry(db, report.id, report.lat, report.lng)
     await db.flush()
 
+    # ── Step 2b: External enrichment — weather (Redis) + GIS cache ────────
+    await _enrich_weather(zone, db)
+    await _enrich_infrastructure(zone, db)
+
     # ── Step 3: Verification Agent ─────────────────────────────────────────
-    incident = await _get_or_create_incident(zone, db)
+    incident = await _get_or_create_incident(zone, db, report)
 
     verify_input  = AgentInput(
         incident_id=incident.id,
@@ -103,7 +129,12 @@ async def process_report(report: Report, db: AsyncSession) -> None:
     ))
 
     # ── Step 4: Detection Agent ────────────────────────────────────────────
-    zone_reports    = await db.execute(select(Report.id).where(Report.zone_id == zone.id))
+    # When corroboration merged into an incident from a neighbouring zone,
+    # detection sees reports of BOTH zones (merged incident view).
+    zone_ids = {zone.id}
+    if incident.zone_id and incident.zone_id != zone.id:
+        zone_ids.add(incident.zone_id)
+    zone_reports    = await db.execute(select(Report.id).where(Report.zone_id.in_(zone_ids)))
     all_report_ids  = [row[0] for row in zone_reports.all()]
 
     detect_input  = AgentInput(
@@ -259,19 +290,13 @@ async def _enrich_with_groq(report: Report) -> None:
 
 
 async def _upsert_zone(report: Report, db: AsyncSession) -> Zone:
-    """Find existing zone within ~500m of report coords, or create one."""
-    RADIUS_DEG = 0.005  # ≈ 500m at equatorial scale
+    """Find existing zone within ~500m of report coords, or create one.
+    Phase 9: PostGIS ST_DWithin replaces the RADIUS_DEG bounding box (§9)."""
+    zone_id = await gis_service.zone_at_point(db, report.lat, report.lng, radius_m=500.0)
 
-    result = await db.execute(
-        select(Zone).where(
-            and_(
-                Zone.centroid_lat.between(report.lat - RADIUS_DEG, report.lat + RADIUS_DEG),
-                Zone.centroid_lng.between(report.lng - RADIUS_DEG, report.lng + RADIUS_DEG),
-                Zone.deleted == False,
-            )
-        ).limit(1)
-    )
-    zone = result.scalar_one_or_none()
+    zone = None
+    if zone_id:
+        zone = (await db.execute(select(Zone).where(Zone.id == zone_id))).scalar_one_or_none()
 
     if not zone:
         zone = Zone(
@@ -284,19 +309,132 @@ async def _upsert_zone(report: Report, db: AsyncSession) -> Zone:
         )
         db.add(zone)
         await db.flush()
+        await gis_service.set_zone_geometry(
+            db, zone.id, zone.centroid_lat, zone.centroid_lng, zone.radius_meters
+        )
         logger.info("zone_created", zone_id=zone.id, lat=report.lat, lng=report.lng)
 
     return zone
 
 
-async def _get_or_create_incident(zone: Zone, db: AsyncSession) -> Incident:
-    """Find active incident for zone, or create one."""
+async def _enrich_weather(zone: Zone, db: AsyncSession) -> None:
+    """Ensure a fresh weather reading exists for the zone (Redis-cached).
+    Best-effort: provider failures leave the DB as-is (§31, never fabricate)."""
+    from datetime import timedelta
+
+    from app.integrations.base import ConnectorError
+    from app.models.weather import WeatherReading
+    from app.pollers.weather import _compute_risk_score
+    from app.services.weather_service import weather_service
+
+    since = datetime.now(timezone.utc) - timedelta(minutes=10)
+    existing = (
+        await db.execute(
+            select(WeatherReading.id).where(
+                and_(
+                    WeatherReading.zone_id == zone.id,
+                    WeatherReading.polled_at >= since,
+                )
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing:
+        return  # fresh reading already stored (poller or earlier report)
+
+    try:
+        obs = await weather_service.get_current_weather(
+            zone.centroid_lat, zone.centroid_lng, allow_stale=False
+        )
+    except ConnectorError as exc:
+        logger.warning(
+            "pipeline_weather_unavailable",
+            zone=zone.id,
+            provider=exc.provider,
+            error=exc.message,
+        )
+        return
+
+    db.add(
+        WeatherReading(
+            id=str(uuid.uuid4()),
+            zone_id=zone.id,
+            lat=zone.centroid_lat,
+            lng=zone.centroid_lng,
+            rainfall_mm_hr=obs.rainfall_mm_hr,
+            wind_speed_kmh=obs.wind_speed_kmh or 0.0,
+            temperature_c=obs.temperature_c,
+            weather_main=obs.weather_main,
+            weather_description=obs.weather_description,
+            risk_score=_compute_risk_score(
+                obs.rainfall_mm_hr, obs.wind_speed_kmh or 0.0, obs.weather_main
+            ),
+            polled_at=datetime.now(timezone.utc),
+        )
+    )
+    await db.flush()
+    logger.info("pipeline_weather_enriched", zone=zone.id, risk=obs.rainfall_mm_hr)
+
+
+async def _enrich_infrastructure(zone: Zone, db: AsyncSession) -> None:
+    """Refresh GIS cache for the zone when nothing is cached nearby.
+    Gated twice: (a) skip when features already exist near the zone,
+    (b) Redis throttle — at most one Overpass attempt per zone per hour."""
+    from datetime import timedelta
+
+    from app.integrations import cache as redis_cache
+    from app.models.infrastructure import Infrastructure
+
+    south, west, north, east = gis_service.bbox_for_radius(
+        zone.centroid_lat, zone.centroid_lng,
+        max(1000.0, float(zone.radius_meters or 500) * 4),
+    )
+    cached = (
+        await db.execute(
+            select(func.count(Infrastructure.id)).where(
+                and_(
+                    Infrastructure.lat.between(south, north),
+                    Infrastructure.lng.between(west, east),
+                )
+            )
+        )
+    ).scalar()
+    if cached:
+        return
+
+    throttle_key = f"gis_refresh_attempted:{zone.id}"
+    if await redis_cache.cache_get(throttle_key):
+        return  # recent attempt already made (provider down / genuinely empty)
+
+    ingested = await gis_service.refresh_zone_infrastructure(db, zone.id)
+    await redis_cache.cache_set(throttle_key, 1, ttl=3600)
+    if ingested:
+        logger.info("pipeline_gis_enriched", zone=zone.id, features=ingested)
+
+
+async def _get_or_create_incident(
+    zone: Zone, db: AsyncSession, report: Report | None = None
+) -> Incident:
+    """Find active incident for zone (or a nearby corroboration cluster),
+    or create one. Clustering merge is additive — same-zone behaviour is
+    unchanged when no cross-zone candidate matches (§9)."""
     result = await db.execute(
         select(Incident).where(
             and_(Incident.zone_id == zone.id, Incident.active == True)
         ).limit(1)
     )
     incident = result.scalar_one_or_none()
+
+    if not incident and report is not None:
+        incident = await find_cluster_incident(zone, report, db)
+        if incident:
+            logger.info(
+                "incident_corroboration_merged",
+                incident_id=incident.id,
+                report_zone_id=zone.id,
+                incident_zone_id=incident.zone_id,
+                report_id=report.id,
+            )
+            return incident
 
     if not incident:
         incident = Incident(

@@ -6,10 +6,29 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import structlog
+
 from app.core.database import get_db
 from app.engine.prediction_engine import predict_spread
 
+logger = structlog.get_logger()
+
 router = APIRouter()
+
+
+async def _emit_prediction(zone_id: str, disaster_type: str, result: dict) -> None:
+    """WebSocket prediction_updated (§25) — enrichment only; cells trimmed
+    from the WS payload (HTTP contract keeps the full result)."""
+    try:
+        from app.services.websocket import emit_prediction_updated
+
+        cells = result.get("cells")
+        trimmed = {k: v for k, v in result.items() if k != "cells"}
+        if cells is not None:
+            trimmed["cells_count"] = len(cells)
+        await emit_prediction_updated(zone_id, disaster_type, trimmed)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("prediction_updated_emit_failed", zone_id=zone_id, error=str(exc))
 
 
 class FloodPredictionBody(BaseModel):
@@ -35,14 +54,16 @@ class WhatIfBody(BaseModel):
 
 @router.post("/flood", tags=["predictions"])
 async def predict_flood(body: FloodPredictionBody, db: AsyncSession = Depends(get_db)):
-    """Run flood spread simulation for a zone."""
+    """Run flood spread simulation for a zone (driven by body.rainfall_mm_hr)."""
     try:
         result = await predict_spread(
             zone_id=body.zone_id,
             disaster_type="flood",
             hours_ahead=body.hours,
             db=db,
+            rainfall_mm_hr=body.rainfall_mm_hr,
         )
+        await _emit_prediction(body.zone_id, "flood", result)
         return {
             "disaster_type": "flood",
             "zone_id": body.zone_id,
@@ -56,14 +77,16 @@ async def predict_flood(body: FloodPredictionBody, db: AsyncSession = Depends(ge
 
 @router.post("/fire", tags=["predictions"])
 async def predict_fire(body: FirePredictionBody, db: AsyncSession = Depends(get_db)):
-    """Run fire spread simulation for a zone."""
+    """Run fire spread simulation for a zone (driven by body.wind_speed_kmh)."""
     try:
         result = await predict_spread(
             zone_id=body.zone_id,
             disaster_type="fire",
             hours_ahead=body.hours,
             db=db,
+            wind_speed_kmh=body.wind_speed_kmh,
         )
+        await _emit_prediction(body.zone_id, "fire", result)
         return {
             "disaster_type": "fire",
             "zone_id": body.zone_id,
@@ -80,7 +103,9 @@ async def get_predictions(
     zone_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Retrieve current predictions for a zone (last flood/fire run)."""
+    """Current MODEL PROJECTION state for a zone — flood & fire runs computed
+    from the latest real inputs (weather readings + evidence + GIS context).
+    Previously returned an always-empty stub (additive fix, Phase 10)."""
     from app.models.zone import Zone
 
     z_result = await db.execute(select(Zone).where(Zone.id == zone_id))
@@ -89,16 +114,30 @@ async def get_predictions(
     if not zone:
         raise HTTPException(404, detail="Zone not found")
 
+    async def _run(kind: str, **kwargs) -> dict | None:
+        try:
+            return await predict_spread(
+                zone_id=zone_id, disaster_type=kind, hours_ahead=12, db=db, **kwargs
+            )
+        except ValueError:
+            return None
+
+    last_flood = await _run("flood")
+    last_fire = await _run("fire")
+
     return {
         "zone_id": zone_id,
         "zone_name": zone.name,
-        "last_flood": {
+        "projection_label": "MODEL PROJECTION",
+        "last_flood": last_flood
+        or {
             "expires_at": None,
             "affected_cells": [],
             "max_intensity": 0,
             "flooded_percentage": 0,
         },
-        "last_fire": {
+        "last_fire": last_fire
+        or {
             "expires_at": None,
             "burned_area": [],
             "max_intensity": 0,
@@ -113,11 +152,17 @@ async def what_if_simulation(body: WhatIfBody, db: AsyncSession = Depends(get_db
     What-if simulation: adjust parameters and see predicted outcome
     on priority score and spread area.
     """
+    # What-if contract unchanged: parameter-in → deterministic engine.
+    # Body parameters now actually drive the base run (previously ignored;
+    # body defaults 50/20 equal the legacy hard-coded values).
+    kind = body.disaster_type.lower()
     base_result = await predict_spread(
         zone_id=body.zone_id,
         disaster_type=body.disaster_type,
         hours_ahead=body.hours,
         db=db,
+        rainfall_mm_hr=body.rainfall_mm_hr if kind == "flood" else None,
+        wind_speed_kmh=body.wind_speed_kmh if kind == "fire" else None,
     )
 
     priority_delta = body.resource_delta * 3.0
@@ -132,6 +177,8 @@ async def what_if_simulation(body: WhatIfBody, db: AsyncSession = Depends(get_db
     adjusted_result["disaster_type"] = body.disaster_type
     adjusted_result["rainfall_mm_hr"] = body.rainfall_mm_hr
     adjusted_result["wind_speed_kmh"] = body.wind_speed_kmh
+
+    await _emit_prediction(body.zone_id, body.disaster_type, adjusted_result)
 
     return {
         "zone_id": body.zone_id,

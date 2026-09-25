@@ -19,9 +19,12 @@ from app.services.groq_gateway import groq_gateway
 logger = structlog.get_logger()
 
 
-def _evidence_bundle(incident: Incident) -> dict:
-    """Structured evidence handed to the summariser — engine output only."""
-    return {
+async def _evidence_bundle(incident: Incident, db: AsyncSession) -> dict:
+    """Structured evidence handed to the summariser — engine output plus
+    external evidence with provider/retrieved_at attribution (PRD §33)."""
+    from app.services.evidence_fusion import evidence_fusion
+
+    bundle = {
         "incident_id": incident.id,
         "zone_id": incident.zone_id,
         "disaster_type": incident.disaster_type,
@@ -37,6 +40,10 @@ def _evidence_bundle(incident: Incident) -> dict:
         "xai_reasoning": incident.xai_reasoning,
         "created_at": incident.created_at.isoformat() if incident.created_at else None,
     }
+    bundle["external_evidence"] = await evidence_fusion.incident_attribution(
+        incident.id, db
+    )
+    return bundle
 
 
 async def ensure_incident_narrative(
@@ -60,7 +67,7 @@ async def ensure_incident_narrative(
     if need_summary:
         try:
             incident.groq_summary = await groq_gateway.summarise_incident(
-                _evidence_bundle(incident)
+                await _evidence_bundle(incident, db)
             )
         except Exception as exc:
             logger.warning(

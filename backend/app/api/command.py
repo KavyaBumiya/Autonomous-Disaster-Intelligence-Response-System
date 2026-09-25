@@ -166,7 +166,7 @@ async def command_query(
         elapsed_s=round(elapsed, 2),
     )
 
-    return CommandResponseModel(
+    response_model = CommandResponseModel(
         response=result.response,
         function_calls=[
             FunctionCallInfo(name=fc.get("name", ""), arguments=fc.get("arguments", {}))
@@ -179,6 +179,25 @@ async def command_query(
         groq_call_id=result.groq_call_id,
         conversation_id=request.conversation_id,
     )
+
+    # WebSocket: command_interaction (§25) — enrichment only, never breaks the reply
+    try:
+        from app.services.websocket import emit_command_interaction
+
+        await emit_command_interaction(
+            user_id=current_user.get("user_id", ""),
+            query=request.user_query,
+            response={
+                "response": response_model.response[:500],
+                "function_calls": [fc.name for fc in response_model.function_calls],
+                "model_used": response_model.model_used,
+            },
+            source="command_center",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("command_interaction_emit_failed", error=str(exc))
+
+    return response_model
 
 
 # ─── XAI Explanation endpoint ────────────────────────────────────────────
@@ -208,6 +227,11 @@ async def explain_incident(
         incident.groq_explanation = explanation
         await db.commit()
 
+    # Additive source attribution for persisted evidence (PRD §33)
+    from app.services.evidence_fusion import evidence_fusion
+
+    attribution = await evidence_fusion.incident_attribution(incident_id, db)
+
     return {
         "incident_id":    incident_id,
         "priority_score": incident.priority_score,
@@ -215,6 +239,7 @@ async def explain_incident(
         "explanation":    explanation,
         "xai_raw":        incident.xai_reasoning,
         "groq_used":      groq_gateway.available,
+        "evidence_attribution": attribution,
     }
 
 

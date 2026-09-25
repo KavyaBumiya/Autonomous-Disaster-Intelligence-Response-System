@@ -8,8 +8,14 @@ Cost model (deterministic, no LLM):
     cost = distance_km
          + traffic_penalty      (time-of-day heuristic)
          + flood_penalty        (proximity of segment endpoints to flood zones)
-         + bridge_risk_penalty  (placeholder — OSM bridge tags when available)
-         + blockage_penalty     (caller-supplied blocked roads / high-priority incidents)
+         + bridge_risk_penalty  (cached OSM bridge features near the corridor —
+                                 replaces the old straight>5km heuristic)
+         + blockage_penalty     (caller-supplied blocked roads + field reports
+                                 mentioning blockages along the corridor)
+         + weather_penalty      (latest weather risk)
+         + satellite_penalty    (satellite evidence when present; provider is
+                                 not configured today → always 0, never
+                                 fabricated — §32)
 
 Primary pathfinder: OSRM public demo server (road network).
 Fallback: haversine straight-line estimate when OSRM is unreachable
@@ -25,11 +31,12 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
 import structlog
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.integrations.base import ConnectorError
+from app.integrations.gis.osrm import OsrmConnector
 from app.models.resource import Resource
 from app.models.zone import Zone
 from app.models.incident import Incident
@@ -37,15 +44,35 @@ from app.models.weather import WeatherReading
 
 logger = structlog.get_logger()
 
-OSRM_BASE = "https://router.project-osrm.org"
-OSRM_TIMEOUT_S = 8.0
-
 # Penalty weights (PRD §5.5 — tunable)
 W_TRAFFIC = 0.15
 W_FLOOD = 0.40
 W_BRIDGE = 0.10
 W_BLOCKAGE = 0.60
 W_WEATHER_RISK = 0.25
+
+# Phase 11 — corridor signals
+BRIDGE_PROXIMITY_DEG = 0.002          # ~200 m corridor half-width
+BRIDGE_PENALTY_PER_FEATURE = 0.06
+BRIDGE_PENALTY_MAX = 0.40
+FIELD_REPORT_WINDOW_HOURS = 6
+FIELD_REPORT_PENALTY_PER_HIT = 0.15
+SATELLITE_PENALTY_PER_OBS = 0.10
+SATELLITE_PENALTY_MAX = 0.30
+SATELLITE_SOURCES = ("satellite", "sentinel", "landsat", "modis")
+BLOCKAGE_KEYWORDS = (
+    "road closed",
+    "road blocked",
+    "street blocked",
+    "route blocked",
+    "bridge collapsed",
+    "bridge washed",
+    "underwater",
+    "waterlogging",
+    "water logged",
+    "highway closed",
+    "passage blocked",
+)
 
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -63,6 +90,134 @@ def _traffic_penalty(now: datetime | None = None) -> float:
     if local in (7, 8, 9, 17, 18, 19):
         return 0.25
     return 0.0
+
+
+async def corridor_signals(
+    origin_lat: float,
+    origin_lng: float,
+    dest_lat: float,
+    dest_lng: float,
+    geometry: list[list[float]],
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """Phase 11 — deterministic corridor risk signals from cached data only.
+
+    Corridor bbox derives from the resolved route polyline (road detours can
+    leave the straight-line envelope). Returns {bridge_count, bridge_gis_data,
+    field_report_hits, satellite_observations} — every count is real; missing
+    data reports 0 with an availability flag (never fabricated, §7/§32).
+    """
+    pad = 0.01
+    if geometry and len(geometry) >= 2:
+        lons = [c[0] for c in geometry]
+        lats = [c[1] for c in geometry]
+        south, north = min(lats) - pad, max(lats) + pad
+        west, east = min(lons) - pad, max(lons) + pad
+    else:
+        south = min(origin_lat, dest_lat) - pad
+        north = max(origin_lat, dest_lat) + pad
+        west = min(origin_lng, dest_lng) - pad
+        east = max(origin_lng, dest_lng) + pad
+
+    out: dict[str, Any] = {
+        "bridge_count": 0,
+        "bridge_gis_data": False,
+        "field_report_hits": 0,
+        "satellite_observations": 0,
+    }
+
+    # ── Bridge features near the route polyline (cached OSM/GIS only) ────
+    try:
+        from app.models.infrastructure import Infrastructure
+
+        rows = (
+            await db.execute(
+                select(Infrastructure.lat, Infrastructure.lng).where(
+                    and_(
+                        Infrastructure.category == "bridge",
+                        Infrastructure.lat.between(south, north),
+                        Infrastructure.lng.between(west, east),
+                    )
+                ).limit(500)
+            )
+        ).all()
+        total_features = (
+            await db.execute(
+                select(sa_func.count(Infrastructure.id)).where(
+                    and_(
+                        Infrastructure.lat.between(south, north),
+                        Infrastructure.lng.between(west, east),
+                    )
+                )
+            )
+        ).scalar() or 0
+        out["bridge_gis_data"] = total_features > 0
+
+        if rows and len(geometry) >= 2:
+            from shapely.geometry import LineString, Point
+
+            line = LineString([(c[0], c[1]) for c in geometry])
+            for lat, lng in rows:
+                if line.distance(Point(lng, lat)) <= BRIDGE_PROXIMITY_DEG:
+                    out["bridge_count"] += 1
+        else:
+            out["bridge_count"] = len(rows)  # bbox fallback (2-point geometry)
+    except Exception as exc:  # signals are enrichment — never break routing
+        logger.warning("route_bridge_signal_failed", error=str(exc))
+
+    # ── Field reports mentioning blockages near the corridor ─────────────
+    try:
+        from datetime import timedelta
+
+        from app.models.report import Report
+
+        since = datetime.now(timezone.utc) - timedelta(hours=FIELD_REPORT_WINDOW_HOURS)
+        texts = (
+            await db.execute(
+                select(Report.message_text, Report.transcript).where(
+                    and_(
+                        Report.suppressed == False,  # noqa: E712
+                        Report.lat.isnot(None),
+                        Report.lng.isnot(None),
+                        Report.lat.between(south, north),
+                        Report.lng.between(west, east),
+                        Report.created_at >= since,
+                    )
+                ).limit(200)
+            )
+        ).all()
+        hits = 0
+        for message_text, transcript in texts:
+            blob = ((message_text or "") + " " + (transcript or "")).lower()
+            if any(kw in blob for kw in BLOCKAGE_KEYWORDS):
+                hits += 1
+        out["field_report_hits"] = hits
+    except Exception as exc:
+        logger.warning("route_field_report_signal_failed", error=str(exc))
+
+    # ── Satellite evidence (provider not configured today → 0, §32) ─────
+    try:
+        from app.models.external import ExternalObservation
+
+        ors = [ExternalObservation.source.ilike(f"{s}%") for s in SATELLITE_SOURCES]
+        sat = (
+            await db.execute(
+                select(sa_func.count(ExternalObservation.id)).where(
+                    and_(
+                        or_(*ors),
+                        ExternalObservation.lat.isnot(None),
+                        ExternalObservation.lng.isnot(None),
+                        ExternalObservation.lat.between(south, north),
+                        ExternalObservation.lng.between(west, east),
+                    )
+                )
+            )
+        ).scalar() or 0
+        out["satellite_observations"] = int(sat)
+    except Exception as exc:
+        logger.warning("route_satellite_signal_failed", error=str(exc))
+
+    return out
 
 
 async def calculate_route(
@@ -151,7 +306,6 @@ async def calculate_route(
         blockage_pen = min(1.0, blockage_pen + 0.25 * len(avoid_zone_ids))
 
     traffic_pen = _traffic_penalty()
-    bridge_pen = 0.05 if straight > 5.0 else 0.0  # longer cross-river detours
 
     # ── OSRM road route (preferred) ──────────────────────────────────────
     source = "fallback_haversine"
@@ -164,24 +318,56 @@ async def calculate_route(
     note = "Straight-line estimate — OSRM unavailable (DEGRADED)."
 
     try:
-        async with httpx.AsyncClient(timeout=OSRM_TIMEOUT_S) as client:
-            url = (
-                f"{OSRM_BASE}/route/v1/driving/"
-                f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}"
-                f"?overview=full&geometries=geojson&alternatives=false"
-            )
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-            if data.get("code") == "Ok" and data.get("routes"):
-                route0 = data["routes"][0]
-                distance_km = float(route0["distance"]) / 1000.0
-                duration_min = float(route0["duration"]) / 60.0
-                geometry = route0["geometry"]["coordinates"]
-                source = "osrm"
-                note = "OSRM road route with disaster penalties applied to cost."
+        osrm = OsrmConnector()
+        r0 = await osrm.route(origin_lat, origin_lng, dest_lat, dest_lng)
+        if r0 is not None:
+            distance_km = r0["distance_m"] / 1000.0
+            duration_min = r0["duration_s"] / 60.0
+            if r0["geometry"]:
+                geometry = r0["geometry"]
+            source = "osrm"
+            note = "OSRM road route with disaster penalties applied to cost."
+    except ConnectorError as exc:
+        logger.warning(
+            "osrm_failed_using_fallback",
+            provider=exc.provider,
+            error=exc.message,
+            status_code=exc.status_code,
+        )
     except Exception as exc:
         logger.warning("osrm_failed_using_fallback", error=str(exc))
+
+    # ── Phase 11: corridor signals on the resolved geometry ─────────────
+    # Replaces the old `straight > 5.0` bridge heuristic with real cached
+    # OSM bridge features; adds field-report blockages + satellite evidence
+    # (provider not configured → honest zeros, §32).
+    signals: dict[str, Any] = {
+        "bridge_count": 0,
+        "bridge_gis_data": False,
+        "field_report_hits": 0,
+        "satellite_observations": 0,
+    }
+    if db is not None:
+        try:
+            signals = await corridor_signals(
+                origin_lat, origin_lng, dest_lat, dest_lng, geometry, db
+            )
+        except Exception as exc:
+            logger.warning("route_corridor_signals_failed", error=str(exc))
+
+    bridge_pen = (
+        min(BRIDGE_PENALTY_MAX, BRIDGE_PENALTY_PER_FEATURE * signals["bridge_count"])
+        if signals["bridge_count"]
+        else 0.0
+    )
+    field_report_pen = min(
+        1.0, FIELD_REPORT_PENALTY_PER_HIT * signals["field_report_hits"]
+    )
+    satellite_pen = min(
+        SATELLITE_PENALTY_MAX,
+        SATELLITE_PENALTY_PER_OBS * signals["satellite_observations"],
+    )
+    blockage_pen = min(1.0, blockage_pen + field_report_pen)
 
     # ── Deterministic hazard-adjusted cost (PRD §5.5) ────────────────────
     penalties = {
@@ -190,6 +376,7 @@ async def calculate_route(
         "bridge": round(bridge_pen, 3),
         "blockage": round(blockage_pen, 3),
         "weather": round(weather_pen, 3),
+        "satellite": round(satellite_pen, 3),
     }
     cost = (
         distance_km
@@ -198,6 +385,7 @@ async def calculate_route(
         + distance_km * W_BRIDGE * penalties["bridge"]
         + distance_km * W_BLOCKAGE * penalties["blockage"]
         + distance_km * penalties["weather"]
+        + distance_km * penalties["satellite"]
     )
     # Duration also scales with flood/blocked corridors (slower progress)
     adjusted_duration = duration_min * (
@@ -220,6 +408,17 @@ async def calculate_route(
         "straight_line_km": round(straight, 2),
         "cost": round(cost, 3),
         "penalties": penalties,
+        "penalty_details": {
+            "bridge_features_near_route": signals["bridge_count"],
+            "bridge_gis_data": signals["bridge_gis_data"],
+            "field_report_hits": signals["field_report_hits"],
+            "satellite_observations": signals["satellite_observations"],
+            "satellite_note": (
+                "provider not configured — no observations (never fabricated)"
+                if signals["satellite_observations"] == 0
+                else "satellite observations present"
+            ),
+        },
         "near_critical_zone_ids": near_critical,
         "geometry": geometry,
         "source": source,

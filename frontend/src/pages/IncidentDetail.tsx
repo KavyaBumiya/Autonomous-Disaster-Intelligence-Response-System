@@ -16,6 +16,8 @@ import { WhatIfSimulation } from "@/components/WhatIfSimulation";
 import { RouteIntelligence } from "@/components/RouteIntelligence";
 import { ResourcePanel } from "@/components/ResourcePanel";
 import { EvidencePanel } from "@/components/EvidencePanel";
+import { WeatherWidget } from "@/components/WeatherWidget";
+import { SeismicPanel } from "@/components/SeismicPanel";
 import { useSystemHealth } from "@/hooks/useSystemHealth";
 import {
   Badge,
@@ -271,6 +273,18 @@ export const IncidentDetail: React.FC = () => {
             </Link>
           </div>
         )}
+      </section>
+
+      {/* ── Weather + seismic context (Phase 15) ───────────────────── */}
+      <section className="mb-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
+        {zone && Number.isFinite(zone.centroid_lat) && Number.isFinite(zone.centroid_lng) && (
+          <WeatherWidget
+            lat={zone.centroid_lat}
+            lng={zone.centroid_lng}
+            label={zone.name || "Incident zone"}
+          />
+        )}
+        <SeismicPanel limit={3} />
       </section>
 
       {/* ── Overview + Live map ──────────────────────────────────────── */}

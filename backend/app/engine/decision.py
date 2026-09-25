@@ -40,6 +40,9 @@ from app.models.report import Report
 from app.models.weather import WeatherReading
 from app.models.seismic import SeismicEvent
 from app.models.action import Action
+from app.core.config import get_settings
+from app.services.evidence_fusion import evidence_fusion
+from app.services.websocket import emit_evidence_updated
 
 logger = structlog.get_logger()
 
@@ -179,6 +182,32 @@ async def score_zone(zone_id: str, incident: Incident, db: AsyncSession) -> dict
     prediction_raw   = min(1.0, seismic_risk * 0.6 + weather_risk * 0.4)
     predict_contrib  = W_PREDICTION_RISK * prediction_raw * 100.0
 
+    # ── 7. External evidence fusion (PRD §15 — optional factor) ──────────
+    #  Weight defaults to 0.0 (settings.evidence_factor_weight), so the
+    #  PRD six-factor output is byte-identical unless explicitly enabled.
+    #  Bundling is enrichment: any failure must never affect the score.
+    evidence_weight = float(get_settings().evidence_factor_weight)
+    evidence_bundle: dict = {}
+    evidence_raw = 0.0
+    evidence_label = "no external risk signals available"
+    try:
+        evidence_bundle = await evidence_fusion.build_bundle(zone_id, incident, db)
+        evidence_raw, evidence_label = evidence_fusion.external_factor(evidence_bundle)
+        await evidence_fusion.persist_incident_evidence(
+            str(incident.id), evidence_bundle, db
+        )
+    except Exception as exc:  # noqa: BLE001 — fusion never breaks scoring
+        logger.warning(
+            "evidence_fusion_failed",
+            incident_id=str(incident.id),
+            zone_id=zone_id,
+            error=type(exc).__name__,
+        )
+        evidence_bundle = {}
+        evidence_raw = 0.0
+        evidence_label = "evidence fusion unavailable"
+    evidence_contrib = evidence_weight * evidence_raw * 100.0
+
     # ── Compute final score ──────────────────────────────────────────────
     raw_score      = (
         victim_contrib
@@ -187,6 +216,7 @@ async def score_zone(zone_id: str, incident: Incident, db: AsyncSession) -> dict
         + hazard_contrib
         + time_contrib
         + predict_contrib
+        + evidence_contrib
     )
     priority_score = round(min(max(raw_score, 0.0), 100.0), 1)
     band           = priority_band(priority_score)
@@ -215,6 +245,10 @@ async def score_zone(zone_id: str, incident: Incident, db: AsyncSession) -> dict
         "time_raw":          round(time_raw, 3),
         "seismic_risk":      round(seismic_risk, 3),
         "prediction_raw":    round(prediction_raw, 3),
+        "evidence_weight":   round(evidence_weight, 3),
+        "evidence_raw":      round(evidence_raw, 3),
+        "evidence_contrib":  round(evidence_contrib, 3),
+        "evidence_label":    evidence_label,
         "pop_factor":        round(pop_factor, 2),
     }
 
@@ -256,6 +290,22 @@ async def score_zone(zone_id: str, incident: Incident, db: AsyncSession) -> dict
     lines.append(f"  Disaster type: {incident.disaster_type or 'unclassified'}")
     lines.append("")
 
+    agg = (evidence_bundle or {}).get("aggregate") or {}
+    available_sections = int(agg.get("available_sections") or 0)
+    lines.append("EXTERNAL EVIDENCE (PRD §15 fused bundle):")
+    if available_sections:
+        lines.append(f"  Sections available: {available_sections}/5, "
+                     f"mean confidence {float(agg.get('mean_confidence') or 0.0):.2f}")
+        for signal in agg.get("risk_signals") or []:
+            lines.append(f"  Signal: {signal}")
+        lines.append(
+            f"  Factor 7 weight: {evidence_weight:.2f} → "
+            f"{evidence_contrib:.1f} pts ({evidence_label})"
+        )
+    else:
+        lines.append("  No external evidence available for zone")
+    lines.append("")
+
     if priority_score >= APPROVAL_THRESHOLD:
         lines.append(f"► RECOMMENDED ACTION: Dispatch nearest available rescue unit.")
         lines.append(f"► STATUS: PENDING HUMAN APPROVAL")
@@ -263,6 +313,28 @@ async def score_zone(zone_id: str, incident: Incident, db: AsyncSession) -> dict
         lines.append(f"► STATUS: MONITORING — below dispatch threshold ({APPROVAL_THRESHOLD})")
 
     xai_reasoning = "\n".join(lines)
+
+    # ── Emit evidence_updated (additive; never breaks scoring) ───────────
+    if evidence_bundle:
+        try:
+            await emit_evidence_updated(
+                zone_id,
+                str(incident.id),
+                {
+                    "available_sections": available_sections,
+                    "mean_confidence": agg.get("mean_confidence", 0.0),
+                    "risk_signals": agg.get("risk_signals", []),
+                    "evidence_raw": round(evidence_raw, 3),
+                    "evidence_weight": round(evidence_weight, 3),
+                    "priority_score": priority_score,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "evidence_emit_failed",
+                incident_id=str(incident.id),
+                error=type(exc).__name__,
+            )
 
     # ── Create action if above approval threshold ────────────────────────
     if priority_score >= APPROVAL_THRESHOLD:

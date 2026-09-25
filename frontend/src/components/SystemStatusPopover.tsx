@@ -16,6 +16,8 @@ const ROW_KEYS: ServiceKey[] = [
   "predictions",
   "maps",
   "realtime",
+  "weather",
+  "seismic",
 ];
 
 function statusTextClass(status: ServiceStatus): string {

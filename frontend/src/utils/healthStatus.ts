@@ -18,6 +18,10 @@ export interface SystemHealth {
   predictions: ServiceStatus;
   maps: ServiceStatus;
   realtime: ServiceStatus;
+  /** External weather provider (open-meteo) — optional, §31. */
+  weather: ServiceStatus;
+  /** External seismic provider (usgs) — optional, §31. */
+  seismic: ServiceStatus;
   overall: ServiceStatus;
   reasons: string[];
   groqModel?: string | null;
@@ -32,7 +36,9 @@ export type ServiceKey =
   | "groq"
   | "predictions"
   | "maps"
-  | "realtime";
+  | "realtime"
+  | "weather"
+  | "seismic";
 
 export const SERVICE_LABELS: Record<ServiceKey, string> = {
   api: "Backend API",
@@ -42,6 +48,8 @@ export const SERVICE_LABELS: Record<ServiceKey, string> = {
   predictions: "Predictions",
   maps: "Mapbox",
   realtime: "Realtime",
+  weather: "Weather (Open-Meteo)",
+  seismic: "Seismic (USGS)",
 };
 
 /** Optional / intelligence services — failure degrades, never hard-offlines core. */
@@ -50,6 +58,8 @@ const OPTIONAL_SERVICES: ServiceKey[] = [
   "predictions",
   "maps",
   "realtime",
+  "weather",
+  "seismic",
 ];
 
 export function createInitialHealth(): SystemHealth {
@@ -61,6 +71,8 @@ export function createInitialHealth(): SystemHealth {
     predictions: "UNKNOWN",
     maps: "UNKNOWN",
     realtime: "UNKNOWN",
+    weather: "UNKNOWN",
+    seismic: "UNKNOWN",
     overall: "UNKNOWN",
     reasons: ["Checking AegisAI services…"],
     checking: true,
@@ -78,7 +90,16 @@ export function createInitialHealth(): SystemHealth {
 export function calculateOverallHealth(
   health: Pick<
     SystemHealth,
-    "api" | "database" | "auth" | "groq" | "predictions" | "maps" | "realtime" | "checking"
+    | "api"
+    | "database"
+    | "auth"
+    | "groq"
+    | "predictions"
+    | "maps"
+    | "realtime"
+    | "weather"
+    | "seismic"
+    | "checking"
   >,
 ): ServiceStatus {
   if (health.checking) return "UNKNOWN";
@@ -107,7 +128,16 @@ export function calculateOverallHealth(
 export function getHealthReasons(
   health: Pick<
     SystemHealth,
-    "api" | "database" | "auth" | "groq" | "predictions" | "maps" | "realtime" | "overall"
+    | "api"
+    | "database"
+    | "auth"
+    | "groq"
+    | "predictions"
+    | "maps"
+    | "realtime"
+    | "weather"
+    | "seismic"
+    | "overall"
   >,
 ): string[] {
   const reasons: string[] = [];
@@ -134,6 +164,16 @@ export function getHealthReasons(
   }
   if (health.realtime === "OFFLINE" || health.realtime === "DEGRADED") {
     reasons.push("Live updates disconnected.");
+  }
+  if (health.weather === "DEGRADED" || health.weather === "OFFLINE") {
+    reasons.push(
+      "Weather provider degraded — forecast data may be stale (never fabricated).",
+    );
+  }
+  if (health.seismic === "DEGRADED" || health.seismic === "OFFLINE") {
+    reasons.push(
+      "Seismic feed degraded — earthquake data may be stale (never fabricated).",
+    );
   }
   if (health.database === "OFFLINE" || health.database === "DEGRADED") {
     reasons.push("Database degraded.");

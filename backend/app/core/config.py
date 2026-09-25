@@ -90,11 +90,25 @@ class Settings(BaseSettings):
     groq_translate_model:  str = "allam-2-7b"
     groq_moderation_model: str = "meta-llama/llama-prompt-guard-2-86m"
 
-    # ── External data APIs ────────────────────────────────────────────────
-    usgs_api_base:       str = "https://earthquake.usgs.gov/fdsnws/event/1"
-    twitter_bearer_token: str = ""
-    mapbox_access_token: str = ""
-    nominatim_user_agent: str = "AegisAI/1.0"
+    # ── External data APIs (PRD §35 — connector base URLs) ──────────────
+    # Defaults match the previously hard-coded values, so adding these
+    # settings changes nothing until env overrides are provided.
+    usgs_api_base:           str = "https://earthquake.usgs.gov/fdsnws/event/1"
+    usgs_feed_url:           str = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson"
+    open_meteo_api_base:     str = "https://api.open-meteo.com/v1"
+    open_meteo_archive_base: str = "https://archive-api.open-meteo.com/v1/era5"
+    overpass_api_url:        str = "https://overpass-api.de/api/interpreter"
+    osrm_api_base:           str = "https://router.project-osrm.org"
+    nominatim_base_url:      str = "https://nominatim.openstreetmap.org"
+    reliefweb_api_url:       str = "https://api.reliefweb.int/v1/"
+    twitter_bearer_token:    str = ""
+    mapbox_access_token:     str = ""
+    nominatim_user_agent:    str = "AegisAI/1.0"
+
+    # ── Evidence fusion (PRD §15 — optional 7th priority factor) ─────────
+    # 0.0 (default) keeps the PRD 6-factor formula unchanged; raise
+    # (e.g. 0.05) to let fused external evidence nudge the score.
+    evidence_factor_weight: float = 0.0
 
     # ── Social media polling ──────────────────────────────────────────────
     social_hashtags:              str = "#flood,#earthquake,#cyclone,#fire,#disaster,#SOS,#rescue"

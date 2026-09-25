@@ -25,7 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.resource import Resource
 from app.models.action import Action
 from app.models.incident import Incident
-from app.services.websocket import emit_action_state_changed, emit_incident_priority_updated
+from app.services.websocket import (
+    emit_action_state_changed,
+    emit_incident_priority_updated,
+    emit_resource_assigned,
+)
 
 logger = structlog.get_logger()
 
@@ -168,10 +172,10 @@ async def command_resources(incident: Incident, db: AsyncSession,
         incident_id=incident.id,
         old_priority=old_priority,
         new_priority=incident.priority_score,
-        xai_reasoning=f"Resources assigned: {resource_names}. "
-                      f"Behaviour risk: {behaviour_risk_score:.1f}, "
-                      f"Supply urgency: {supply_urgency:.1f}. "
-                      f"Priority adjusted for dispatch.",
+        xai_string=f"Resources assigned: {resource_names}. "
+                    f"Behaviour risk: {behaviour_risk_score:.1f}, "
+                    f"Supply urgency: {supply_urgency:.1f}. "
+                    f"Priority adjusted for dispatch.",
         disaster_type=incident.disaster_type,
     )
 
@@ -192,6 +196,17 @@ async def command_resources(incident: Incident, db: AsyncSession,
 
     logger.info("Resources assigned to incident", incident_id=incident.id,
                 assigned_count=len(selected), action_id=action.id)
+
+    # WebSocket resource_assigned (§25) — enrichment only
+    try:
+        await emit_resource_assigned(
+            action_id=action.id,
+            zone_id=zone_id or incident.zone_id or "",
+            resources=resource_details,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("resource_assigned_emit_failed", action_id=action.id,
+                       error=str(exc))
 
     return {
         "assigned_resources": resource_details,

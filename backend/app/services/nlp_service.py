@@ -214,11 +214,13 @@ async def process(text: str) -> dict:
 
     # Step 6: Geocode
     lat, lng = None, None
+    geocoding_confidence = None
     if location_string:
         geo = await geocode(location_string)
         if geo:
             lat = geo["lat"]
             lng = geo["lng"]
+            geocoding_confidence = geo.get("confidence")
 
     # NOTE: Structured LLM extraction / translation is handled by the Groq
     # AI Gateway in the orchestrator pipeline — not here. Keeping this
@@ -232,6 +234,7 @@ async def process(text: str) -> dict:
         "location_string": location_string,
         "lat": lat,
         "lng": lng,
+        "geocoding_confidence": geocoding_confidence,
         "nlp_model_version": model_version,
         "llm_enhanced": False,
     }

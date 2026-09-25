@@ -21,7 +21,7 @@ from app.core.database import get_db
 from app.models.audio_upload import AudioUpload
 from app.models.report import Report
 from app.agents.orchestrator import process_report
-from app.services import nlp_service
+from app.services import nlp_service, gis_service
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -66,8 +66,13 @@ async def _ingest_report(report: Report, db: AsyncSession, background: Backgroun
         if not report.lat and nlp.get("lat"):
             report.lat = nlp["lat"]
             report.lng = nlp["lng"]
+            # Confidence describes the stored coordinates' provenance —
+            # only recorded when NLP geocoding actually supplied them (§10).
+            report.geocoding_confidence = nlp.get("geocoding_confidence")
 
     db.add(report)
+    await db.flush()
+    await gis_service.set_report_geometry(db, report.id, report.lat, report.lng)
     await db.commit()
     await db.refresh(report)
 
@@ -160,6 +165,7 @@ async def ingest_voice_report(
     )
     db.add(report)
     await db.flush()
+    await gis_service.set_report_geometry(db, report.id, report.lat, report.lng)
 
     # Save audio_upload record
     audio_upload = AudioUpload(
@@ -257,6 +263,9 @@ async def _run_pipeline_in_session(report: Report, db: AsyncSession) -> None:
         if not report.lat and nlp.get("lat"):
             report.lat = nlp["lat"]
             report.lng = nlp["lng"]
+            # Confidence describes the stored coordinates' provenance —
+            # only recorded when NLP geocoding actually supplied them (§10).
+            report.geocoding_confidence = nlp.get("geocoding_confidence")
     await process_report(report, db)
 
 

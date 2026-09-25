@@ -32,7 +32,7 @@ interface SystemHealthStore extends SystemHealth {
 function buildHealth(
   partial: Pick<
     SystemHealth,
-    "api" | "database" | "auth" | "groq" | "predictions" | "maps" | "realtime"
+    "api" | "database" | "auth" | "groq" | "predictions" | "maps" | "realtime" | "weather" | "seismic"
   > &
     Partial<Pick<SystemHealth, "groqModel" | "checking" | "lastChecked">>,
 ): SystemHealth {
@@ -45,6 +45,8 @@ function buildHealth(
     predictions: partial.predictions,
     maps: partial.maps,
     realtime: partial.realtime,
+    weather: partial.weather,
+    seismic: partial.seismic,
     checking,
   };
   const overall = calculateOverallHealth(overallInput);
@@ -57,6 +59,8 @@ function buildHealth(
     predictions: partial.predictions,
     maps: partial.maps,
     realtime: partial.realtime,
+    weather: partial.weather,
+    seismic: partial.seismic,
     checking,
     overall,
     reasons,
@@ -110,6 +114,19 @@ async function runChecks(): Promise<void> {
   const realtime: ServiceStatus =
     prev.realtime === "UNKNOWN" ? "UNKNOWN" : prev.realtime;
 
+  // Optional external providers (§31): DEGRADED/OFFLINE both surface as
+  // DEGRADED — an optional provider never reports OFFLINE to the operator.
+  const providers = apiRes.ok ? (apiRes.data.providers ?? {}) : {};
+  const optionalProvider = (name: string): ServiceStatus => {
+    if (api === "OFFLINE") return "UNKNOWN";
+    const status = providers[name]?.status;
+    if (status === "ONLINE") return "ONLINE";
+    if (status === "DEGRADED" || status === "OFFLINE") return "DEGRADED";
+    return "UNKNOWN";
+  };
+  const weather = optionalProvider("open-meteo");
+  const seismic = optionalProvider("usgs");
+
   setState(
     buildHealth({
       api,
@@ -120,6 +137,8 @@ async function runChecks(): Promise<void> {
       predictions,
       maps,
       realtime,
+      weather,
+      seismic,
       checking: false,
     }),
   );
@@ -146,6 +165,8 @@ export const useSystemHealthStore = create<SystemHealthStore>((set, get) => ({
         predictions: prev.predictions,
         maps: prev.maps,
         realtime: status,
+        weather: prev.weather,
+        seismic: prev.seismic,
         checking: prev.checking,
       }),
     );
@@ -163,6 +184,8 @@ export const useSystemHealthStore = create<SystemHealthStore>((set, get) => ({
         predictions: prev.predictions,
         maps: status,
         realtime: prev.realtime,
+        weather: prev.weather,
+        seismic: prev.seismic,
         checking: prev.checking,
       }),
     );
@@ -180,6 +203,8 @@ export const useSystemHealthStore = create<SystemHealthStore>((set, get) => ({
         predictions: status,
         maps: prev.maps,
         realtime: prev.realtime,
+        weather: prev.weather,
+        seismic: prev.seismic,
         checking: prev.checking,
       }),
     );
@@ -198,6 +223,8 @@ export const useSystemHealthStore = create<SystemHealthStore>((set, get) => ({
         predictions: prev.predictions,
         maps: prev.maps,
         realtime: prev.realtime,
+        weather: prev.weather,
+        seismic: prev.seismic,
         checking: prev.checking,
       }),
     );

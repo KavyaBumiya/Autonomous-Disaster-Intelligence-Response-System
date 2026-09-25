@@ -130,7 +130,12 @@ INTERNAL_APIS = {
             "prediction_updated",
             "route_changed",
             "resource_assigned",
-            "command_center_interaction",
+            "command_interaction",
+            # Phase 14 additions (§25)
+            "resource_status_updated",
+            "evidence_updated",
+            "weather.updated",
+            "earthquake.detected",
         ],
         "rooms": ["global_feed", "zone_{zone_id}"],
     },

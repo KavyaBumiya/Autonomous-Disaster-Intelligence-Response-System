@@ -102,10 +102,15 @@ async def _weather_consistency(report: Report, db: AsyncSession) -> float:
     return 0.6  # neutral for other types
 
 
+SEISMIC_MATCH_RADIUS_KM = 50.0
+
+
 async def _seismic_consistency(report: Report, db: AsyncSession) -> float:
     """
-    Check if earthquake report matches USGS data (50km, 30min window).
-    Returns 1.0 if matches, 0.0 if contradicts, 0.5 if N/A.
+    Check if earthquake report matches USGS data.
+    Phase 9: SPATIALLY MATCHED — event must be within 50 km of the report
+    (was: any M>=4.5 event globally, which falsely corroborated distant
+    quakes). Window: last 30 min. Returns 1.0 match / 0.1 contradict / 0.5 N/A.
     """
     if not report.disaster_type or report.disaster_type.lower() != "earthquake":
         return 0.5  # N/A
@@ -113,19 +118,19 @@ async def _seismic_consistency(report: Report, db: AsyncSession) -> float:
     if not report.lat or not report.lng:
         return 0.5
 
+    from app.services.route_intelligence import haversine_km
+
     since = datetime.now(timezone.utc) - timedelta(minutes=30)
-    # Simplified: check if ANY seismic event M >= 4.5 in the last 30 min
     result = await db.execute(
         select(SeismicEvent).where(
             and_(SeismicEvent.event_time >= since, SeismicEvent.magnitude >= 4.5)
-        ).limit(1)
+        ).limit(100)
     )
-    event = result.scalar_one_or_none()
+    for event in result.scalars().all():
+        if haversine_km(report.lat, report.lng, event.lat, event.lng) <= SEISMIC_MATCH_RADIUS_KM:
+            return 1.0  # corroborates — nearby event
 
-    if event:
-        return 1.0  # corroborates
-    else:
-        return 0.1  # contradicts — no seismic event detected
+    return 0.1  # contradicts — no seismic event near the report location
 
 
 def _location_coherence(report: Report) -> float:

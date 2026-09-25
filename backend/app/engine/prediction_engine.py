@@ -99,9 +99,13 @@ def _flood_propagation_probability(rainfall_mm_hr: float, cell_elevation_relativ
 
 
 async def calculate_flood_spread(zone_id: str, rainfall_mm_hr: float,
-                                 hours: int = 12, db: AsyncSession = None) -> dict:
+                                 hours: int = 12, db: AsyncSession = None,
+                                 evidence_boost: float = 0.0) -> dict:
     """
     Calculate flood spread simulation for a zone over given hours.
+
+    evidence_boost (Phase 10): small bounded delta [0, EVIDENCE_BOOST_MAX]
+    added to cell propagation probability from corroborating reports.
 
     Returns dict with:
     - affected_cells: List[{"lat": float, "lng": float, "intensity": float, "time_step": int}]
@@ -113,7 +117,8 @@ async def calculate_flood_spread(zone_id: str, rainfall_mm_hr: float,
     if db is None:
         from app.core.database import AsyncSessionLocal as _AsyncSessionLocal
         async with _AsyncSessionLocal() as _db:
-            return await calculate_flood_spread(zone_id, rainfall_mm_hr, hours, _db)
+            return await calculate_flood_spread(zone_id, rainfall_mm_hr, hours, _db,
+                                                evidence_boost=evidence_boost)
 
     zone = await _get_zone_geometry(zone_id, db)
     cells = await _generate_flood_grid(zone["centroid_lat"], zone["centroid_lng"],
@@ -133,6 +138,8 @@ async def calculate_flood_spread(zone_id: str, rainfall_mm_hr: float,
             prob = _flood_propagation_probability(
                 rainfall_mm_hr, cell.get("elevation_rel", 0.5), dist_km
             )
+            if evidence_boost:
+                prob = min(1.0, round(prob + evidence_boost, 3))
 
             # Propagate: if prob > threshold, cell becomes flooded at this time step
             if prob > 0.4:  # threshold for "flooded"
@@ -264,26 +271,212 @@ async def calculate_fire_spread(zone_id: str, wind_speed_kmh: float,
     }
 
 
+# ── Real inputs (Phase 10) ─────────────────────────────────────────────────
+# Defaults preserve the pre-Phase-10 behaviour when no data exists
+# (hard-coded 50 mm/hr / 20 km/h — now explicitly labelled as assumptions).
+DEFAULT_RAINFALL_MM_HR = 50.0
+DEFAULT_WIND_SPEED_KMH = 20.0
+DEFAULT_LABEL = "no weather data — default assumption (pre-Phase-10 value)"
+EVIDENCE_BOOST_MAX = 0.10       # max probability delta from corroborating reports
+
+
+async def _latest_weather(zone_id: str, db: AsyncSession):
+    """Most recent weather reading for the zone (any age — labelled by caller)."""
+    from app.models.weather import WeatherReading
+
+    result = await db.execute(
+        select(WeatherReading)
+        .where(WeatherReading.zone_id == zone_id)
+        .order_by(WeatherReading.polled_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _active_incident(zone_id: str, db: AsyncSession):
+    from sqlalchemy import and_
+
+    result = await db.execute(
+        select(Incident).where(
+            and_(Incident.zone_id == zone_id, Incident.active == True)
+        ).limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _flood_evidence(zone_id: str, db: AsyncSession) -> dict:
+    """Flood evidence from reports/incident (deterministic, DB only)."""
+    from sqlalchemy import and_, func as sa_func
+
+    from app.models.report import Report
+
+    incident = await _active_incident(zone_id, db)
+    corroborating = (
+        await db.execute(
+            select(sa_func.count(Report.id)).where(
+                and_(Report.zone_id == zone_id, Report.suppressed == False)  # noqa: E712
+            )
+        )
+    ).scalar() or 0
+    return {
+        "corroborating_reports": int(corroborating),
+        "active_incident": incident is not None,
+        "incident_severity": float(getattr(incident, "severity_score", 0.0) or 0.0)
+        if incident
+        else 0.0,
+        "incident_disaster_type": getattr(incident, "disaster_type", None)
+        if incident
+        else None,
+    }
+
+
+async def _gis_context(zone_id: str, db: AsyncSession) -> dict:
+    """Cached GIS features around the zone (bbox counts — no network)."""
+    from sqlalchemy import and_, func as sa_func
+
+    from app.models.infrastructure import Infrastructure
+    from app.services.gis_service import bbox_for_radius
+
+    from app.models.zone import Zone
+
+    zone = (await db.execute(select(Zone).where(Zone.id == zone_id))).scalar_one_or_none()
+    if not zone:
+        return {"available": False, "reason": "zone not found"}
+    south, west, north, east = bbox_for_radius(
+        zone.centroid_lat, zone.centroid_lng,
+        max(1000.0, float(zone.radius_meters or 500) * 4),
+    )
+    rows = (
+        await db.execute(
+            select(Infrastructure.category, sa_func.count(Infrastructure.id))
+            .where(
+                and_(
+                    Infrastructure.lat.between(south, north),
+                    Infrastructure.lng.between(west, east),
+                )
+            )
+            .group_by(Infrastructure.category)
+        )
+    ).all()
+    counts = {str(cat): int(n) for cat, n in rows}
+    if not counts:
+        return {
+            "available": False,
+            "reason": "no cached GIS features near zone (refresh zone infrastructure)",
+            "counts": {},
+        }
+    critical = sum(counts.get(c, 0) for c in ("hospital", "clinic", "shelter"))
+    return {
+        "available": True,
+        "counts": counts,
+        "feature_count": sum(counts.values()),
+        "critical_features": critical,
+    }
+
+
 # ── Main API ──────────────────────────────────────────────────────────────
 
 async def predict_spread(zone_id: str, disaster_type: str, hours_ahead: int = 12,
-                         db: AsyncSession = None) -> dict:
+                         db: AsyncSession = None,
+                         rainfall_mm_hr: float | None = None,
+                         wind_speed_kmh: float | None = None) -> dict:
     """
     Main entry point for prediction engine.
+
+    Phase 10: real inputs from `weather_readings` when callers do not pass
+    explicit parameters (was: hard-coded 50 mm/hr / 20 km/h). Explicit
+    request parameters still win; absence of data falls back to the legacy
+    defaults, labelled as assumptions — never fabricated as observations.
+    Flood projections additionally accept corroborating-report evidence
+    (small bounded probability boost) and GIS exposure context.
 
     Args:
         zone_id: Zone identifier
         disaster_type: "flood" or "fire"
         hours_ahead: Number of hours to simulate (default 12)
         db: AsyncSession (lazy-creates if None)
+        rainfall_mm_hr: explicit override (POST /predictions/flood, what-if)
+        wind_speed_kmh: explicit override (POST /predictions/fire, what-if)
 
-    Returns dict with simulation results specific to disaster type:
-        - flood: {"affected_cells": [...], "max_intensity": float, "flooded_percentage": float, ...}
-        - fire:   {"burned_area": [...], "max_intensity": float, "spread_direction_degrees": float, ...}
+    Returns dict with simulation results + additive metadata:
+        projection_label: "MODEL PROJECTION" (PRD §18)
+        inputs: resolved driver values + their provenance
+        generated_at: ISO timestamp
     """
+    if db is None:
+        from app.core.database import AsyncSessionLocal as _AsyncSessionLocal
+        async with _AsyncSessionLocal() as _db:
+            return await predict_spread(
+                zone_id, disaster_type, hours_ahead, _db,
+                rainfall_mm_hr=rainfall_mm_hr, wind_speed_kmh=wind_speed_kmh,
+            )
+
+    weather = await _latest_weather(zone_id, db)
+    evidence = await _flood_evidence(zone_id, db)
+    gis_ctx = await _gis_context(zone_id, db)
+
     if disaster_type.lower() == "flood":
-        return await calculate_flood_spread(zone_id, rainfall_mm_hr=50.0, hours=hours_ahead, db=db)
+        if rainfall_mm_hr is not None:
+            rain, rain_source = float(rainfall_mm_hr), "request_parameter"
+        elif weather is not None:
+            rain = float(weather.rainfall_mm_hr or 0.0)
+            rain_source = (
+                f"weather_reading:open-meteo @ {weather.polled_at.isoformat()}"
+                if weather.polled_at
+                else "weather_reading:open-meteo"
+            )
+        else:
+            rain, rain_source = DEFAULT_RAINFALL_MM_HR, DEFAULT_LABEL
+
+        # Bounded evidence boost: proven active event + corroboration nudges
+        # cell propagation probability (never dominates rainfall).
+        evidence_boost = 0.0
+        flood_evidence = evidence["incident_disaster_type"] in (None, "flood")
+        if evidence["active_incident"] and evidence["corroborating_reports"] > 0 and flood_evidence:
+            evidence_boost = round(
+                EVIDENCE_BOOST_MAX
+                * min(1.0, evidence["corroborating_reports"] / 10.0),
+                3,
+            )
+
+        result = await calculate_flood_spread(
+            zone_id, rainfall_mm_hr=rain, hours=hours_ahead, db=db,
+            evidence_boost=evidence_boost,
+        )
+        inputs = {
+            "rainfall_mm_hr": rain,
+            "rainfall_source": rain_source,
+            "evidence": evidence,
+            "evidence_boost": evidence_boost,
+            "gis_context": gis_ctx,
+        }
     elif disaster_type.lower() == "fire":
-        return await calculate_fire_spread(zone_id, wind_speed_kmh=20.0, hours=hours_ahead, db=db)
+        if wind_speed_kmh is not None:
+            wind, wind_source = float(wind_speed_kmh), "request_parameter"
+        elif weather is not None:
+            wind = float(weather.wind_speed_kmh or 0.0)
+            wind_source = (
+                f"weather_reading:open-meteo @ {weather.polled_at.isoformat()}"
+                if weather.polled_at
+                else "weather_reading:open-meteo"
+            )
+        else:
+            wind, wind_source = DEFAULT_WIND_SPEED_KMH, DEFAULT_LABEL
+
+        result = await calculate_fire_spread(
+            zone_id, wind_speed_kmh=wind, hours=hours_ahead, db=db
+        )
+        inputs = {
+            "wind_speed_kmh": wind,
+            "wind_source": wind_source,
+            "evidence": evidence,
+            "gis_context": gis_ctx,
+        }
     else:
         raise ValueError(f"Unknown disaster type: {disaster_type}. Expected 'flood' or 'fire'.")
+
+    result["projection_label"] = "MODEL PROJECTION"
+    result["disaster_type"] = disaster_type.lower()
+    result["inputs"] = inputs
+    result["generated_at"] = datetime.now(timezone.utc).isoformat()
+    return result

@@ -17,6 +17,8 @@ const allOnline = {
   predictions: "ONLINE" as const,
   maps: "ONLINE" as const,
   realtime: "ONLINE" as const,
+  weather: "ONLINE" as const,
+  seismic: "ONLINE" as const,
   checking: false,
 };
 
@@ -116,6 +118,35 @@ describe("calculateOverallHealth", () => {
       }),
     ).toBe("DEGRADED");
   });
+
+  it("TEST 9: weather provider degraded → DEGRADED (§31 optional service)", () => {
+    expect(
+      calculateOverallHealth({ ...allOnline, weather: "DEGRADED" }),
+    ).toBe("DEGRADED");
+    expect(
+      calculateOverallHealth({ ...allOnline, weather: "OFFLINE" }),
+    ).toBe("DEGRADED");
+  });
+
+  it("TEST 10: seismic provider degraded → DEGRADED, never OFFLINE overall", () => {
+    expect(
+      calculateOverallHealth({ ...allOnline, seismic: "DEGRADED" }),
+    ).toBe("DEGRADED");
+    // Overall can never go OFFLINE from an optional provider alone
+    expect(
+      calculateOverallHealth({ ...allOnline, seismic: "OFFLINE" }),
+    ).toBe("DEGRADED");
+  });
+
+  it("TEST 11: weather/seismic UNKNOWN (no provider data yet) → still ONLINE", () => {
+    expect(
+      calculateOverallHealth({
+        ...allOnline,
+        weather: "UNKNOWN",
+        seismic: "UNKNOWN",
+      }),
+    ).toBe("ONLINE");
+  });
 });
 
 describe("getHealthReasons", () => {
@@ -147,5 +178,17 @@ describe("getHealthReasons", () => {
     });
     expect(reasons.join(" ")).toMatch(/Mapbox public token/i);
     expect(reasons.join(" ")).toMatch(/authentication required/i);
+  });
+
+  it("weather/seismic degraded reasons never claim fabricated data (§31)", () => {
+    const reasons = getHealthReasons({
+      ...allOnline,
+      weather: "DEGRADED",
+      seismic: "DEGRADED",
+      overall: "DEGRADED",
+    });
+    expect(reasons.join(" ")).toMatch(/Weather provider degraded/i);
+    expect(reasons.join(" ")).toMatch(/Seismic feed degraded/i);
+    expect(reasons.join(" ")).toMatch(/never fabricated/i);
   });
 });

@@ -21,7 +21,7 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, Base, engine
 from app.services.websocket import sio
 from app.pollers.scheduler import start_scheduler, stop_scheduler
-from app.api import reports, incidents, zones, actions, auth, resources, predictions, command, phase2, heatmaps, routes
+from app.api import reports, incidents, zones, actions, auth, resources, predictions, command, phase2, heatmaps, routes, earthquakes, weather
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -238,18 +238,75 @@ app.include_router(actions.router,     prefix="/api/actions",     tags=["actions
 app.include_router(resources.router,   prefix="/api/resources",   tags=["resources"])
 app.include_router(predictions.router, prefix="/api/predictions", tags=["predictions"])
 app.include_router(routes.router,      prefix="/api/routes",      tags=["routes"])
+app.include_router(earthquakes.router, prefix="/api/earthquakes", tags=["earthquakes"])
 app.include_router(command.router,     tags=["command center"])  # prefix already set on router
 app.include_router(phase2.router,      tags=["phase 2 intelligence"])
 app.include_router(heatmaps.router,    tags=["heatmaps"])
+app.include_router(weather.router,     prefix="/api/weather", tags=["weather"])
+
+
+async def _database_ping() -> None:
+    async with AsyncSessionLocal() as db:
+        await db.execute(text("SELECT 1"))
+
+
+async def _cache_ping() -> None:
+    from app.integrations import cache
+
+    client = await cache.get_redis()
+    await client.ping()
+
+
+async def _probe_database() -> str:
+    """DB liveness for /api/health (failure matrix, §31)."""
+    try:
+        await asyncio.wait_for(_database_ping(), timeout=3.0)
+        return "ONLINE"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("health_db_probe_failed", error=str(exc))
+        return "OFFLINE"
+
+
+async def _probe_cache() -> str:
+    """Redis liveness for /api/health (failure matrix, §31)."""
+    try:
+        await asyncio.wait_for(_cache_ping(), timeout=2.0)
+        return "ONLINE"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("health_cache_probe_failed", error=str(exc))
+        return "DEGRADED"
 
 
 @app.get("/api/health", tags=["health"])
 async def health():
     import os
+    from app.integrations import registry
+
+    raw = registry.snapshot()
+    # Raw provider names kept (frontend reads open-meteo/usgs) plus canonical
+    # group aliases {weather, seismic, gis, routing, geocoding, groq} (§31).
+    providers: dict = dict(raw)
+    for group, status in registry.canonical_statuses(raw).items():
+        providers[group] = {"status": status, "canonical": True}
+
+    db_status = await _probe_database()
+    cache_status = await _probe_cache()
+
+    reasons: list[str] = []
+    if db_status != "ONLINE":
+        reasons.append(f"database {db_status}")
+    if cache_status != "ONLINE":
+        reasons.append(f"cache {cache_status} (optimisation only — never blocks)")
+
     return {
-        "status": "ok",
+        "status": "degraded" if reasons else "ok",
         "version": "1.0.0",
         "build": os.environ.get("AEGIS_BUILD_ID", "unversioned"),
+        # Additive (§31): external provider status for DEGRADED detection.
+        "providers": providers,
+        # Additive (Phase 16 failure matrix): core dependency probes.
+        "services": {"database": db_status, "cache": cache_status},
+        "reasons": reasons,
     }
 
 

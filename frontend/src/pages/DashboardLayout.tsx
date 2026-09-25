@@ -8,6 +8,8 @@ import { io, type Socket } from "socket.io-client";
 import { AppShell } from "@/components/AppShell";
 import { KPIStrip } from "@/components/KPIStrip";
 import { Button } from "@/components/ui";
+import { WeatherWidget } from "@/components/WeatherWidget";
+import { SeismicPanel } from "@/components/SeismicPanel";
 import { LiveIncidentsPanel } from "./LiveIncidentsPanel";
 import { RecentReportsPanel } from "./RecentReportsPanel";
 import { ResourcePanel } from "./ResourceStatusPanel";
@@ -370,6 +372,12 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
   const activeZone = selectedZone ?? defaultZoneId;
 
+  // Zone coordinates for the weather widget (Phase 15)
+  const activeZoneObj = useMemo(
+    () => zones.find((z) => z.zone_id === activeZone) ?? null,
+    [zones, activeZone],
+  );
+
   // Keep URL in sync when a default zone is chosen
   useEffect(() => {
     if (!selectedZone && defaultZoneId) {
@@ -581,6 +589,18 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
         </div>
 
         <div className="ops-dashboard-right space-y-5">
+          {activeZoneObj &&
+            Number.isFinite(activeZoneObj.centroid_lat) &&
+            Number.isFinite(activeZoneObj.centroid_lng) && (
+              <WeatherWidget
+                lat={activeZoneObj.centroid_lat}
+                lng={activeZoneObj.centroid_lng}
+                label={activeZoneObj.name || "Zone conditions"}
+              />
+            )}
+
+          <SeismicPanel />
+
           <div className="ops-panel">
             <div className="ops-panel-header">
               <div>

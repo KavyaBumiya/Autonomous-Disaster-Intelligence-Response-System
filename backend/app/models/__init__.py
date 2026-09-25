@@ -9,10 +9,13 @@ from app.models.weather import WeatherReading
 from app.models.seismic import SeismicEvent
 from app.models.social_poll import SocialMediaPoll
 from app.models.audio_upload import AudioUpload
+from app.models.infrastructure import Infrastructure
+from app.models.external import ExternalObservation, Evidence
 
 __all__ = [
     "User", "Zone", "Report", "Incident",
     "AgentOutput", "Resource", "Action",
     "WeatherReading", "SeismicEvent",
-    "SocialMediaPoll", "AudioUpload",
+    "SocialMediaPoll", "AudioUpload", "Infrastructure",
+    "ExternalObservation", "Evidence",
 ]

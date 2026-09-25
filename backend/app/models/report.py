@@ -25,6 +25,7 @@ class Report(Base):
     # Classification (NLP output)
     disaster_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     nlp_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    geocoding_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     informative_flag: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     language_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
     nlp_model_version: Mapped[str] = mapped_column(String(20), default="v0_keyword")

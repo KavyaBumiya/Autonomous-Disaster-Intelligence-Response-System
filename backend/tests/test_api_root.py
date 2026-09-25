@@ -34,7 +34,10 @@ def test_api_root_metadata(client: TestClient):
 def test_api_health(client: TestClient):
     r = client.get("/api/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok", "version": "1.0.0"}
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["version"] == "1.0.0"
+    assert "build" in body
 
 
 def test_root_get_and_head(client: TestClient):
@@ -152,6 +155,83 @@ def test_invalid_token_rejected(client: TestClient):
         headers={"Authorization": "Bearer not-a-real-token"},
     )
     assert r.status_code == 401
+
+
+# ── Phase 17 — exact §41 endpoint contract ──────────────────────────────────
+# The full public surface, frozen: proof that nothing was renamed or removed
+# across Phases 1–17 (additive-only changes allowed).
+CONTRACT_ENDPOINTS: dict[str, set[str]] = {
+    "/api": {"GET"},
+    "/api/actions/{action_id}": {"PATCH"},
+    "/api/auth/login": {"POST"},
+    "/api/auth/me": {"GET"},
+    "/api/command/approval-queue": {"GET"},
+    "/api/command/critical": {"GET"},
+    "/api/command/explain/{incident_id}": {"GET"},
+    "/api/command/health": {"GET"},
+    "/api/command/query": {"POST"},
+    "/api/command/reports": {"GET"},
+    "/api/command/resources/available": {"GET"},
+    "/api/command/summarise/{incident_id}": {"GET"},
+    "/api/command/zone-status": {"GET"},
+    "/api/earthquakes/recent": {"GET"},
+    "/api/health": {"GET"},
+    "/api/heatmaps/combined": {"GET"},
+    "/api/heatmaps/disaster-type": {"GET"},
+    "/api/heatmaps/priority": {"GET"},
+    "/api/heatmaps/trust-score": {"GET"},
+    "/api/heatmaps/victim-density": {"GET"},
+    "/api/incidents": {"GET"},
+    "/api/incidents/{incident_id}": {"GET"},
+    "/api/phase2/behaviour/assess": {"POST"},
+    "/api/phase2/models": {"GET"},
+    "/api/phase2/models/{model_name}": {"GET"},
+    "/api/phase2/supply/forecast": {"POST"},
+    "/api/phase2/volunteers/match": {"POST"},
+    "/api/predictions/fire": {"POST"},
+    "/api/predictions/flood": {"POST"},
+    "/api/predictions/what-if": {"POST"},
+    "/api/predictions/{zone_id}": {"GET"},
+    "/api/reports": {"GET", "POST"},
+    "/api/reports/voice": {"POST"},
+    "/api/resources": {"GET", "POST"},
+    "/api/resources/{incident_id}/assign-resources": {"POST"},
+    "/api/resources/{resource_id}": {"PUT"},
+    "/api/routes/compute": {"POST"},
+    "/api/weather/current": {"GET"},
+    "/api/weather/forecast": {"GET"},
+    "/api/zones": {"GET"},
+    "/api/zones/{zone_id}": {"GET"},
+    "/api/zones/{zone_id}/reports/summary": {"GET"},
+}
+
+
+def test_contract_exact_endpoint_set(client: TestClient):
+    """OpenAPI must match the §41 list exactly — no renames, no removals,
+    and no surprise endpoints outside the frozen contract."""
+    spec = client.get("/openapi.json").json()
+    paths = spec["paths"]
+
+    # Exact set: every contracted path exists …
+    for path, methods in CONTRACT_ENDPOINTS.items():
+        assert path in paths, f"contract endpoint missing: {path}"
+        actual = {
+            m.upper()
+            for m in paths[path]
+            if m in ("get", "post", "put", "patch", "delete")
+        }
+        assert methods <= actual, f"{path}: expected {methods}, got {actual}"
+
+    # … and every live path is in the contract (nothing added silently).
+    # HEAD/OPTIONS are routing metadata, not endpoints — ignore them.
+    live = {
+        p
+        for p in paths
+        if p in CONTRACT_ENDPOINTS
+    }
+    extra = set(paths) - set(CONTRACT_ENDPOINTS)
+    assert not extra, f"endpoints outside the §41 contract: {sorted(extra)}"
+    assert live == set(CONTRACT_ENDPOINTS)
 
 
 def test_command_query_requires_auth(client: TestClient):

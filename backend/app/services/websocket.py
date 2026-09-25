@@ -236,3 +236,60 @@ async def emit_resource_status_updated(
     await sio.emit("resource_status_updated", payload, room="global_feed")
     if zone_id:
         await sio.emit("resource_status_updated", payload, room=f"zone_{zone_id}")
+
+
+async def emit_evidence_updated(zone_id: str, incident_id: str, bundle_summary: dict) -> None:
+    """Fired when the Evidence Fusion service rebuilds an incident's bundle."""
+    payload = {
+        "event": "evidence_updated",
+        "payload": {
+            "incident_id": incident_id,
+            "zone_id": zone_id,
+            **bundle_summary,
+        },
+        "timestamp": _now(),
+        "source": "evidence_fusion",
+    }
+    await sio.emit("evidence_updated", payload, room="global_feed")
+    await sio.emit("evidence_updated", payload, room=f"zone_{zone_id}")
+
+
+async def emit_weather_updated(
+    zone_id: str,
+    risk_score: float,
+    previous_risk_score: float | None,
+    data: dict,
+) -> None:
+    """Fired when a weather poll changes a zone's risk score (throttled —
+    the poller only calls this on an actual change, §25)."""
+    payload = {
+        "event": "weather.updated",
+        "payload": {
+            "zone_id": zone_id,
+            "risk_score": risk_score,
+            "previous_risk_score": previous_risk_score,
+            "rainfall_mm_hr": data.get("rainfall_mm_hr"),
+            "wind_speed_kmh": data.get("wind_speed_kmh"),
+            "weather_main": data.get("weather_main"),
+            "weather_description": data.get("weather_description"),
+        },
+        "timestamp": _now(),
+        "source": "weather_poller",
+    }
+    await sio.emit("weather.updated", payload, room="global_feed")
+    await sio.emit("weather.updated", payload, room=f"zone_{zone_id}")
+
+
+async def emit_earthquake_detected(events: list[dict]) -> None:
+    """Fired once per poll when NEW seismic events are stored (never for
+    already-known events)."""
+    payload = {
+        "event": "earthquake.detected",
+        "payload": {
+            "count": len(events),
+            "events": events,
+        },
+        "timestamp": _now(),
+        "source": "seismic_poller",
+    }
+    await sio.emit("earthquake.detected", payload, room="global_feed")

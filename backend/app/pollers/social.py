@@ -13,7 +13,7 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.models.report import Report
 from app.models.social_poll import SocialMediaPoll
-from app.services import nlp_service, deduplication
+from app.services import nlp_service, deduplication, gis_service
 from app.services.geocoding import geocode
 
 logger = structlog.get_logger()
@@ -128,6 +128,7 @@ async def _process_post(post: dict, db) -> bool:
         location_string=nlp_result.get("location_string"),
         lat=lat,
         lng=lng,
+        geocoding_confidence=nlp_result.get("geocoding_confidence"),
         source=post.get("source", "social_media"),
         social_post_id=post_id,
         nlp_model_version=nlp_result.get("nlp_model_version", "v0_keyword"),
@@ -136,6 +137,8 @@ async def _process_post(post: dict, db) -> bool:
         created_at=datetime.now(timezone.utc),
     )
     db.add(report)
+    await db.flush()
+    await gis_service.set_report_geometry(db, report.id, report.lat, report.lng)
     return True
 
 

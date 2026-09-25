@@ -237,6 +237,90 @@ export interface RoutesResult {
   primary_route: RouteEstimate;
   alternate_routes: RouteEstimate[];
   engine?: string;
+  // Additive Phase 5 fields
+  source?: string;
+  geometry?: { type: "LineString"; coordinates: [number, number][] } | null;
+  cost?: number;
+  penalties?: Record<string, number>;
+}
+
+// ── Weather types (Phase 15) ──────────────────────────────────────────────
+
+export interface WeatherCurrent {
+  provider: string;
+  lat: number;
+  lng: number;
+  rainfall_mm_hr: number;
+  wind_speed_kmh: number;
+  temperature_c: number | null;
+  humidity_pct: number | null;
+  weather_main: string;
+  weather_description: string;
+  risk_score: number;
+  timestamp: string;
+  from_cache: boolean;
+  source: "current";
+}
+
+export interface ForecastSlice {
+  time: string;
+  precipitation_mm: number;
+  precipitation_probability_pct: number | null;
+  temperature_c: number | null;
+}
+
+export interface WeatherForecast {
+  provider: string;
+  lat: number;
+  lng: number;
+  hours: ForecastSlice[];
+  retrieved_at: string | null;
+  from_cache: boolean;
+  source: "forecast";
+}
+
+// ── Seismic types (Phase 15) ──────────────────────────────────────────────
+
+export interface EarthquakeEvent {
+  id?: string;
+  usgs_id?: string;
+  magnitude: number;
+  depth_km: number | null;
+  lat: number;
+  lng: number;
+  place_description?: string | null;
+  place?: string | null;
+  event_time: string;
+  risk_score: number;
+}
+
+export interface EarthquakeListResponse {
+  earthquakes: EarthquakeEvent[];
+  total: number;
+  window_minutes: number;
+  source?: string;
+}
+
+// ── Evidence attribution (Phase 13/15, §33) ───────────────────────────────
+
+export interface EvidenceAttribution {
+  source: string;
+  observation_type: string | null;
+  provider: string;
+  confidence: number;
+  retrieved_at: string | null;
+  available: boolean;
+  reason?: string | null;
+}
+
+export interface ExplainResponse {
+  incident_id: string;
+  priority_score: number;
+  priority_band: string;
+  explanation: string;
+  xai_raw: string;
+  groq_used: boolean;
+  evidence_attribution: EvidenceAttribution[];
 }
 
 // ── Zone APIs ─────────────────────────────────────────────────────────────
@@ -347,6 +431,25 @@ export const routesApi = {
   }) => api.post<RoutesResult>("/api/routes/compute", params),
 };
 
+// ── Weather APIs (Phase 15 — backend-owned Open-Meteo) ────────────────────
+
+export const weatherApi = {
+  current: (lat: number, lng: number) =>
+    api.get<WeatherCurrent>("/api/weather/current", { params: { lat, lng } }),
+
+  forecast: (lat: number, lng: number, hours = 24) =>
+    api.get<WeatherForecast>("/api/weather/forecast", {
+      params: { lat, lng, hours },
+    }),
+};
+
+// ── Earthquake APIs (Phase 15 — local USGS poll) ──────────────────────────
+
+export const earthquakesApi = {
+  recent: (params?: { minutes?: number; min_magnitude?: number; limit?: number }) =>
+    api.get<EarthquakeListResponse>("/api/earthquakes/recent", { params }),
+};
+
 // ── Heatmap APIs ──────────────────────────────────────────────────────────
 
 export const heatmapsApi = {
@@ -372,14 +475,7 @@ export const commandApi = {
   }) => api.post<CommandResponse>("/api/command/query", data),
 
   explain: (incident_id: string) =>
-    api.get<{
-      incident_id: string;
-      priority_score: number;
-      priority_band: string;
-      explanation: string;
-      xai_raw: string;
-      groq_used: boolean;
-    }>(`/api/command/explain/${incident_id}`),
+    api.get<ExplainResponse>(`/api/command/explain/${incident_id}`),
 
   summarise: (incident_id: string) =>
     api.get<{

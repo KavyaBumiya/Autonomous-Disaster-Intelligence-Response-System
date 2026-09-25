@@ -7,9 +7,21 @@
  */
 import api, { type GroqHealthResponse } from "./api";
 
+export interface ProviderStatus {
+  status: string;
+  last_success_at?: number | null;
+  last_error?: string | null;
+  consecutive_failures?: number;
+  latency_ms?: number | null;
+  total_calls?: number;
+  total_failures?: number;
+}
+
 export interface ApiHealthResponse {
   status: string;
   version?: string;
+  /** Additive (§31): external provider status from the backend registry. */
+  providers?: Record<string, ProviderStatus>;
 }
 
 export type HealthCheckResult<T> =

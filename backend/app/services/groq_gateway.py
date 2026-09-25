@@ -391,6 +391,108 @@ COMMAND_TOOLS: list[dict] = [
             },
         },
     },
+    # ── Phase 12 additions (11 → 16 tools, PRD §20) ──────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather_forecast",
+            "description": (
+                "Get an hourly weather forecast (Open-Meteo via backend service, "
+                "Redis-cached) for a zone or coordinates. Returns source-labelled "
+                "data; provider failures degrade honestly instead of fabricating."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "zone_id": {"type": "string", "description": "Zone to resolve coordinates from (optional)"},
+                    "lat":     {"type": "number", "description": "Latitude (optional)"},
+                    "lng":     {"type": "number", "description": "Longitude (optional)"},
+                    "hours":   {"type": "integer", "description": "Forecast hours (default 24)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_earthquakes",
+            "description": (
+                "List recent earthquakes from USGS (live connector; falls back to "
+                "the local USGS poll when the provider is unreachable — degraded "
+                "label included). Never fabricated."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit":         {"type": "integer", "description": "Max events (default 5)"},
+                    "min_magnitude": {"type": "number", "description": "Minimum magnitude (default 0)"},
+                    "minutes":       {"type": "integer", "description": "Look-back window in minutes (default 60)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "geocode_location",
+            "description": (
+                "Resolve a free-text place name to coordinates (Nominatim via "
+                "backend service, cached). Returns None-shaped result on no match."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Place name, e.g. 'Vadodara, Gujarat'"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_infrastructure",
+            "description": (
+                "Query cached GIS infrastructure (OSM via Overpass) near a zone or "
+                "point — nearest features of a category, or category counts. "
+                "Deterministic PostGIS lookup; empty cache is reported honestly."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "zone_id":  {"type": "string", "description": "Zone to resolve coordinates from (optional)"},
+                    "lat":      {"type": "number"},
+                    "lng":      {"type": "number"},
+                    "category": {"type": "string", "description": "road|bridge|hospital|clinic|shelter|school|waterway|building (optional)"},
+                    "limit":    {"type": "integer", "description": "Max features (default 10)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_satellite_evidence",
+            "description": (
+                "Satellite imagery/evidence for an area. The satellite provider is "
+                "NOT configured in this deployment — returns an honest "
+                "'provider not configured' response or any cached observations; "
+                "it never fabricates imagery (PRD §32)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "zone_id": {"type": "string", "description": "Zone to resolve coordinates from (optional)"},
+                    "lat":     {"type": "number"},
+                    "lng":     {"type": "number"},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -1205,6 +1307,272 @@ class ToolExecutor:
             "source":      "groq_xai_explainer",
         }
 
+    # ── Phase 12 additions (PRD §20 — internal services only, no raw DB/HTTP) ──
+
+    async def _resolve_point(
+        self, zone_id: str | None, lat: float | None, lng: float | None
+    ) -> tuple[float | None, float | None]:
+        """Explicit coords win; else resolve zone centroid."""
+        if lat is not None and lng is not None:
+            return float(lat), float(lng)
+        if zone_id:
+            from sqlalchemy import select
+            from app.models.zone import Zone as ZoneModel
+
+            z = (
+                await self.db.execute(select(ZoneModel).where(ZoneModel.id == zone_id))
+            ).scalar_one_or_none()
+            if z:
+                return float(z.centroid_lat), float(z.centroid_lng)
+        return None, None
+
+    async def _tool_get_weather_forecast(
+        self,
+        zone_id: str | None = None,
+        lat: float | None = None,
+        lng: float | None = None,
+        hours: int = 24,
+    ) -> dict:
+        from app.integrations.base import ConnectorError
+        from app.services.weather_service import weather_service
+
+        lat, lng = await self._resolve_point(zone_id, lat, lng)
+        if lat is None or lng is None:
+            return {"error": "Provide zone_id or lat/lng for the forecast."}
+        try:
+            forecast = await weather_service.get_forecast(
+                lat, lng, hours=min(int(hours), 48), allow_stale=True
+            )
+        except ConnectorError as exc:
+            # Honest degradation — forecast is never invented (§31/§32).
+            return {
+                "error": f"Weather provider unavailable: {exc.message}",
+                "provider": exc.provider,
+                "degraded": True,
+            }
+        payload = forecast.model_dump(mode="json")
+        payload.update(
+            {
+                "provider": weather_service.provider,
+                "source": "forecast",
+                "note": "Provider data via backend service (Redis-cached) — not LLM-generated.",
+            }
+        )
+        return payload
+
+    async def _tool_get_earthquakes(
+        self,
+        limit: int = 5,
+        min_magnitude: float = 0.0,
+        minutes: int = 60,
+    ) -> dict:
+        from datetime import timedelta
+
+        from sqlalchemy import select
+        from app.integrations.base import ConnectorError
+        from app.integrations.seismic.usgs import UsgsConnector
+        from app.models.seismic import SeismicEvent
+        from app.schemas.observations import EarthquakeObservation
+
+        limit = max(1, min(int(limit), 50))
+        try:
+            fc = await UsgsConnector().recent_events(
+                minutes=max(1, int(minutes)),
+                min_magnitude=float(min_magnitude),
+                limit=limit,
+            )
+            events = []
+            retrieved = datetime.now(timezone.utc)
+            for feat in (fc.get("features") or [])[:limit]:
+                obs = EarthquakeObservation.from_feature(feat, retrieved_at=retrieved)
+                if obs is not None:
+                    events.append(obs.model_dump(mode="json"))
+            return {
+                "source": "usgs/live",
+                "provider": "usgs",
+                "events": events,
+                "total": len(events),
+                "note": "Live USGS query — real data, never fabricated.",
+            }
+        except ConnectorError as exc:
+            # Degraded: fall back to the local USGS poller's stored events.
+            since = datetime.now(timezone.utc) - timedelta(minutes=int(minutes))
+            rows = (
+                await self.db.execute(
+                    select(SeismicEvent)
+                    .where(
+                        SeismicEvent.event_time >= since,
+                        SeismicEvent.magnitude >= float(min_magnitude),
+                    )
+                    .order_by(SeismicEvent.event_time.desc())
+                    .limit(limit)
+                )
+            ).scalars().all()
+            return {
+                "source": "local_usgs_poll_fallback",
+                "provider": "usgs",
+                "degraded": True,
+                "provider_error": exc.message,
+                "events": [
+                    {
+                        "usgs_id": e.usgs_id,
+                        "magnitude": e.magnitude,
+                        "place": e.place_description,
+                        "lat": e.lat,
+                        "lng": e.lng,
+                        "depth_km": e.depth_km,
+                        "event_time": e.event_time.isoformat() if e.event_time else None,
+                        "risk_score": e.risk_score,
+                    }
+                    for e in rows
+                ],
+                "total": len(rows),
+                "note": "Provider unreachable — serving local poller cache (labelled degraded).",
+            }
+
+    async def _tool_geocode_location(self, query: str) -> dict:
+        from app.services.geocoding import geocode
+
+        if not query or not query.strip():
+            return {"error": "Empty query."}
+        hit = await geocode(query.strip())
+        if not hit:
+            return {
+                "query": query,
+                "result": None,
+                "note": "No match (or geocoder unavailable) — nothing invented.",
+            }
+        return {
+            "query": query,
+            "result": hit,
+            "provider": "nominatim",
+            "note": "Geocoded via backend service (cached).",
+        }
+
+    async def _tool_get_infrastructure(
+        self,
+        zone_id: str | None = None,
+        lat: float | None = None,
+        lng: float | None = None,
+        category: str | None = None,
+        limit: int = 10,
+    ) -> dict:
+        from sqlalchemy import and_, func as sa_func, select
+        from app.models.infrastructure import Infrastructure
+        from app.services.gis_service import bbox_for_radius, nearest_infrastructure
+
+        lat, lng = await self._resolve_point(zone_id, lat, lng)
+        if lat is None or lng is None:
+            return {"error": "Provide zone_id or lat/lng."}
+
+        if category:
+            rows = await nearest_infrastructure(
+                self.db, lat, lng, category, limit=max(1, min(int(limit), 50))
+            )
+            return {
+                "source": "cached_osm_gis",
+                "category": category,
+                "features": rows,
+                "total": len(rows),
+                "note": "Nearest cached OSM features (PostGIS distance) — deterministic.",
+            }
+
+        south, west, north, east = bbox_for_radius(lat, lng, 2000.0)
+        counts = (
+            await self.db.execute(
+                select(Infrastructure.category, sa_func.count(Infrastructure.id))
+                .where(
+                    and_(
+                        Infrastructure.lat.between(south, north),
+                        Infrastructure.lng.between(west, east),
+                    )
+                )
+                .group_by(Infrastructure.category)
+            )
+        ).all()
+        by_cat = {str(c): int(n) for c, n in counts}
+        if not by_cat:
+            return {
+                "source": "cached_osm_gis",
+                "counts": {},
+                "total": 0,
+                "note": (
+                    "No cached GIS features near this point — cache refresh runs "
+                    "in the enrichment pipeline (empty cache reported, never invented)."
+                ),
+            }
+        return {
+            "source": "cached_osm_gis",
+            "counts": by_cat,
+            "total": sum(by_cat.values()),
+            "note": "Category counts within 2 km (cached OSM via Overpass).",
+        }
+
+    async def _tool_get_satellite_evidence(
+        self,
+        zone_id: str | None = None,
+        lat: float | None = None,
+        lng: float | None = None,
+    ) -> dict:
+        from sqlalchemy import and_, select
+        from app.models.external import ExternalObservation
+        from app.services.route_intelligence import SATELLITE_SOURCES
+
+        lat, lng = await self._resolve_point(zone_id, lat, lng)
+        rows: list = []
+        if lat is not None and lng is not None:
+            try:
+                from sqlalchemy import or_
+                ors = [ExternalObservation.source.ilike(f"{s}%") for s in SATELLITE_SOURCES]
+                rows = (
+                    await self.db.execute(
+                        select(ExternalObservation)
+                        .where(
+                            and_(
+                                or_(*ors),
+                                ExternalObservation.lat.between(lat - 0.5, lat + 0.5),
+                                ExternalObservation.lng.between(lng - 0.5, lng + 0.5),
+                            )
+                        )
+                        .order_by(ExternalObservation.retrieved_at.desc())
+                        .limit(10)
+                    )
+                ).scalars().all()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("satellite_evidence_lookup_failed", error=str(exc))
+
+        if rows:
+            return {
+                "available": True,
+                "source": "cached_satellite_observations",
+                "observations": [
+                    {
+                        "source": r.source,
+                        "observation_type": r.observation_type,
+                        "lat": r.lat,
+                        "lng": r.lng,
+                        "value": r.value,
+                        "retrieved_at": r.retrieved_at.isoformat()
+                        if r.retrieved_at
+                        else None,
+                    }
+                    for r in rows
+                ],
+                "total": len(rows),
+                "note": "Cached observations with provider attribution.",
+            }
+
+        return {
+            "available": False,
+            "provider": "not_configured",
+            "observations": [],
+            "total": 0,
+            "note": (
+                "Satellite provider is not configured in this deployment "
+                "(no credentials). No imagery available — never fabricated (PRD §32)."
+            ),
+        }
+
 
 # ---------------------------------------------------------------------------
 # Offline / fallback helpers
@@ -1293,6 +1661,23 @@ def _build_fallback_summary(evidence: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _log_call(log: AILogRecord) -> None:
+    # §31/§34 — feed the shared provider registry so /api/health can report
+    # groq ONLINE/DEGRADED/OFFLINE like every other external connector.
+    try:
+        from app.integrations import registry as _registry
+
+        if log.success:
+            _registry.record_success(
+                "groq",
+                log.latency_ms or 0.0,
+                detail={"model": log.model, "task": log.task_type},
+            )
+        else:
+            _registry.record_failure(
+                "groq", log.error or "groq call failed", latency_ms=log.latency_ms or None
+            )
+    except Exception:  # noqa: BLE001 — registry must never break LLM logging
+        pass
     structlog.get_logger().info(
         "groq_call",
         call_id=log.call_id,

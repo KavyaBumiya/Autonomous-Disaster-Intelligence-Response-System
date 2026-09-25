@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { toast } from "sonner";
 import { routesApi, incidentsApi, apiErrorMessage, type RoutesResult } from "@/services/api";
+import { useRouteStore } from "@/stores/routeStore";
 
 interface RouteIntelligenceProps {
   zoneId: string;
@@ -39,6 +40,8 @@ export const RouteIntelligence: React.FC<RouteIntelligenceProps> = ({
         disaster_type: disasterType,
       });
       setRoutes(res.data);
+      // Publish for the map's route layer (Phase 15)
+      useRouteStore.getState().setRoute(res.data);
       toast.success("Routes computed successfully");
     } catch (err) {
       toast.error(apiErrorMessage(err) || "Route computation failed");

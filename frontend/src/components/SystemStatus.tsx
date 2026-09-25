@@ -59,6 +59,8 @@ export const SystemStatus: React.FC<SystemStatusProps> = ({
             predictions: health.predictions,
             maps: health.maps,
             realtime: health.realtime,
+            weather: health.weather,
+            seismic: health.seismic,
             overall: health.overall,
             reasons: health.reasons,
             groqModel: health.groqModel,

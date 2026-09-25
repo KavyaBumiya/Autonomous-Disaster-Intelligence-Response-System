@@ -1,201 +1,144 @@
 """
-Weather Service — Open-Meteo Integration.
+WeatherService — backend-owned weather retrieval (PRD §6).
 
-Provides weather data retrieval from Open-Meteo API for flood/fire prediction
-and general weather monitoring. Cached responses with TTL for performance.
+Single entrypoint for the poller, prediction engine, API endpoints and
+Groq tools — nobody calls Open-Meteo directly anymore.
+
+Capabilities:
+    get_current_weather(lat, lng, allow_stale=False) -> WeatherObservation
+    get_forecast(lat, lng, hours=24, allow_stale=False) -> ForecastResult
+    get_historical_weather(lat, lng, start, end) -> ForecastResult
+
+Caching (§27):
+    weather:{lat:.4f}:{lng:.4f}         fresh cache   TTL 300 s
+    weather:{lat:.4f}:{lng:.4f}:latest  stale fallback TTL 24 h
+
+Failure policy (§31):
+    allow_stale=False → ConnectorError propagates (poller skips the zone)
+    allow_stale=True  → stale cache returned with from_cache=True, or
+                        ConnectorError if no cache exists.
+    Weather is NEVER fabricated.
 """
-import time
-import requests
-from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from __future__ import annotations
 
-from app.core.apis_config import WEATHER_APIS, get_weather_api_config, API_CONFIG
+from datetime import datetime, timezone
 
-# Open-Meteo base configuration
-OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast"
-OPEN_METEO_CACHE_TTL = API_CONFIG["cache_ttl_seconds"]  # 5 minutes
+import structlog
+
+from app.integrations import cache
+from app.integrations.base import ConnectorError
+from app.integrations.weather.open_meteo import OpenMeteoConnector
+from app.schemas.observations import ForecastResult, WeatherObservation
+
+logger = structlog.get_logger()
+
+FRESH_TTL_SECONDS = 300          # §27 weather:{lat}:{lng}
+LATEST_TTL_SECONDS = 86400       # stale fallback — honest label, 24 h
 
 
 class WeatherService:
-    """Weather service using Open-Meteo API."""
+    def __init__(self, connector: OpenMeteoConnector | None = None) -> None:
+        self._connector = connector or OpenMeteoConnector()
 
-    def __init__(self, api_name: str = "open-meteo"):
-        self.api_name = api_name
-        self.config = get_weather_api_config(api_name)
-        self._cache: Dict[str, Dict[str, Any]] = {}
-        self._cache_timestamps: Dict[str, float] = {}
+    # ── keys ─────────────────────────────────────────────────────────────
 
-    def _is_cached(self, key: str) -> bool:
-        """Check if cached data is still valid."""
-        if key not in self._cache:
-            return False
-        if time.time() - self._cache_timestamps.get(key, 0) > OPEN_METEO_CACHE_TTL:
-            return False
-        return True
+    @staticmethod
+    def _fresh_key(lat: float, lng: float) -> str:
+        return f"weather:{lat:.4f}:{lng:.4f}"
 
-    def _cache_set(self, key: str, data: Dict[str, Any]) -> None:
-        """Cache weather data."""
-        self._cache[key] = data
-        self._cache_timestamps[key] = time.time()
+    @staticmethod
+    def _latest_key(lat: float, lng: float) -> str:
+        return f"weather:{lat:.4f}:{lng:.4f}:latest"
 
-    def _cache_get(self, key: str) -> Optional[Dict[str, Any]]:
-        """Get cached weather data if available."""
-        if self._is_cached(key):
-            return self._cache[key]
-        return None
+    # ── current ──────────────────────────────────────────────────────────
 
-    def get_current_weather(
-        self, latitude: float, longitude: float
-    ) -> Dict[str, Any]:
-        """
-        Get current weather conditions for a location.
+    async def get_current_weather(
+        self, lat: float, lng: float, *, allow_stale: bool = False
+    ) -> WeatherObservation:
+        fresh_key = self._fresh_key(lat, lng)
 
-        Args:
-            latitude: Latitude in decimal degrees
-            longitude: Longitude in decimal degrees
-
-        Returns:
-            Dictionary with current weather conditions
-        """
-        cache_key = f"current_{latitude}_{longitude}"
-        cached = self._cache_get(cache_key)
+        cached = await cache.cache_get(fresh_key)
         if cached:
-            return cached
+            try:
+                return WeatherObservation(**{**cached, "from_cache": True})
+            except (TypeError, ValueError):
+                logger.warning("weather_cache_invalid", key=fresh_key)
 
         try:
-            params = {
-                "latitude": latitude,
-                "longitude": longitude,
-                "current_weather": "true",
-            }
-            resp = requests.get(OPEN_METEO_BASE, params=params, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                result = {
-                    "temperature": data["current_weather"].get("temperature"),
-                    "windspeed": data["current_weather"].get("windspeed"),
-                    "winddirection": data["current_weather"].get("winddirection"),
-                  "weathercode": data["current_weather"].get("weathercode"),
-                  "time": data["current_weather"].get("time"),
-                }
-                self._cache_set(cache_key, result)
-                return result
-        except Exception as e:
-            print(f"Error fetching weather: {e}")
+            obs = await self._connector.get_current_weather(lat, lng)
+        except ConnectorError as exc:
+            if not allow_stale:
+                raise
+            stale = await cache.cache_get(self._latest_key(lat, lng))
+            if stale:
+                logger.warning(
+                    "weather_stale_served",
+                    provider=getattr(self._connector, "provider", "open-meteo"),
+                    age_hint=stale.get("timestamp"),
+                    error=exc.message,
+                )
+                try:
+                    return WeatherObservation(**{**stale, "from_cache": True})
+                except (TypeError, ValueError):
+                    pass
+            # §31 distinct "no cache" message — never fabricate readings.
+            raise ConnectorError(
+                exc.provider,
+                f"{exc.message} (no cached weather available for this "
+                f"location — DEGRADED, nothing fabricated)",
+                status_code=exc.status_code,
+                retryable=exc.retryable,
+            ) from exc
 
-        return {}
+        payload = obs.model_dump(mode="json")
+        await cache.cache_set(fresh_key, payload, FRESH_TTL_SECONDS)
+        await cache.cache_set(self._latest_key(lat, lng), payload, LATEST_TTL_SECONDS)
+        return obs
 
-    def get_hourly_forecast(
-        self,
-        latitude: float,
-        longitude: float,
-        hourly_vars: List[str] = None,
-        start_date: str = None,
-        end_date: str = None,
-    ) -> Dict[str, Any]:
-        """
-        Get hourly weather forecast.
+    # ── forecast ─────────────────────────────────────────────────────────
 
-        Args:
-            latitude: Latitude in decimal degrees
-            longitude: Longitude in decimal degrees
-            hourly_vars: List of hourly variables to retrieve
-            start_date: Start date YYYY-MM-DD (default: today)
-            end_date: End date YYYY-MM-DD (default: 7 days ahead)
-
-        Returns:
-            Dictionary with hourly forecast data
-        """
-        if hourly_vars is None:
-            hourly_vars = ["temperature_2m", "precipitation", "weathercode"]
-
-        cache_key = f"hourly_{latitude}_{longitude}_{','.join(hourly_vars)}"
-        cached = self._cache_get(cache_key)
+    async def get_forecast(
+        self, lat: float, lng: float, hours: int = 24, *, allow_stale: bool = False
+    ) -> ForecastResult:
+        key = f"forecast:{lat:.4f}:{lng:.4f}:{hours}"
+        cached = await cache.cache_get(key)
         if cached:
-            return cached
+            try:
+                return ForecastResult(**{**cached, "from_cache": True})
+            except (TypeError, ValueError):
+                logger.warning("forecast_cache_invalid", key=key)
 
-        try:
-            params = {
-                "latitude": latitude,
-                "longitude": longitude,
-                "hourly": ",".join(hourly_vars),
-            }
+        # No stale sibling for forecasts — propagate provider failures (§31:
+        # callers surface DEGRADED weather rather than fabricated numbers).
+        result = await self._connector.get_forecast(lat, lng, hours)
 
-            if start_date:
-                params["start_date"] = start_date
-            if end_date:
-                params["end_date"] = end_date
+        await cache.cache_set(key, result.model_dump(mode="json"), FRESH_TTL_SECONDS * 6)
+        return result
 
-            resp = requests.get(OPEN_METEO_BASE, params=params, timeout=15)
-            if resp.status_code == 200:
-                data = resp.json()
-                self._cache_set(cache_key, data)
-                return data
+    # ── historical (ERA5) ────────────────────────────────────────────────
 
-        except Exception as e:
-            print(f"Error fetching hourly forecast: {e}")
+    async def get_historical_weather(
+        self, lat: float, lng: float, start_date: str, end_date: str
+    ) -> ForecastResult:
+        key = f"weather_hist:{lat:.4f}:{lng:.4f}:{start_date}:{end_date}"
+        cached = await cache.cache_get(key)
+        if cached:
+            try:
+                return ForecastResult(**{**cached, "from_cache": True})
+            except (TypeError, ValueError):
+                logger.warning("weather_history_cache_invalid", key=key)
 
-        return {}
+        result = await self._connector.get_historical_weather(
+            lat, lng, start_date, end_date
+        )
+        # Historical data is immutable — cache for a day.
+        await cache.cache_set(key, result.model_dump(mode="json"), LATEST_TTL_SECONDS)
+        return result
 
-    def get_weather_code_description(self, code: int) -> str:
-        """Convert Open-Meteo weather code to human-readable description."""
-        codes = {
-            0: "Clear sky",
-            1: "Mainly clear",
-            2: "Partly cloudy",
-            3: "Overcast",
-            45: "Fog",
-            48: "Depositing rime fog",
-            51: "Light drizzle",
-            53: "Moderate drizzle",
-            55: "Dense drizzle",
-            56: "Light freezing drizzle",
-            57: "Dense freezing drizzle",
-            61: "Slight rain",
-            63: "Moderate rain",
-            65: "Heavy rain",
-            66: "Light freezing rain",
-            67: "Heavy freezing rain",
-            71: "Slight snow fall",
-            73: "Moderate snow fall",
-            75: "Heavy snow fall",
-            77: "Snow grains",
-            80: "Rain showers",
-            81: "Rain showers",
-            82: "Rain showers",
-            95: "Thunderstorm",
-            96: "Thunderstorm with slight hail",
-            99: "Thunderstorm with heavy hail",
-        }
-        return codes.get(code, "Unknown condition")
+    @property
+    def provider(self) -> str:
+        return self._connector.provider
 
 
-# ─── Service Instance ────────────────────────────────────────────────
-
-# Global service instance
+# Shared instance (pollers, services, and API handlers all import this).
 weather_service = WeatherService()
-
-
-# ─── Convenience Functions ───────────────────────────────────────────
-
-def get_current_weather(latitude: float, longitude: float) -> Dict[str, Any]:
-    """Quick access to current weather."""
-    return weather_service.get_current_weather(latitude, longitude)
-
-
-def get_hourly_forecast(
-    latitude: float,
-    longitude: float,
-    hourly_vars=None,
-    start_date=None,
-    end_date=None,
-) -> Dict[str, Any]:
-    """Quick access to hourly forecast."""
-    return weather_service.get_hourly_forecast(
-        latitude, longitude, hourly_vars, start_date, end_date
-    )
-
-
-def get_weather_description(code: int) -> str:
-    """Quick access to weather code description."""
-    return weather_service.get_weather_code_description(code)
