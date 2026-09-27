@@ -126,7 +126,10 @@ export interface CommandResponse {
   execution_results: Record<string, unknown>[];
   execution_time: number;
   model_used: string;
+  /** True only when the NIM model produced `response`; False on any fallback. */
   ai_available: boolean;
+  /** True when a key is present in the server env, even if it fails to authenticate. */
+  ai_configured?: boolean;
   ai_call_id: string;
   conversation_id?: string | null;
 }
@@ -163,7 +166,12 @@ export interface RoutesResult {
   engine?: string;
   // Additive Phase 5 fields
   source?: string;
-  geometry?: { type: "LineString"; coordinates: [number, number][] } | null;
+  /**
+   * Plain [lng, lat] pairs, NOT a GeoJSON LineString. The backend serialises
+   * the route centreline as a bare array; typing it as GeoJSON previously
+   * forced every consumer to special-case it.
+   */
+  geometry?: [number, number][] | null;
   cost?: number;
   penalties?: Record<string, number>;
 }
@@ -245,6 +253,70 @@ export interface ExplainResponse {
   xai_raw: string;
   ai_used: boolean;
   evidence_attribution: EvidenceAttribution[];
+}
+
+// ── Prediction types ──────────────────────────────────────────────────────
+
+/** Grid cell emitted by the prediction engine. Points, not polygons. */
+export interface PredictionCell {
+  lat: number;
+  lng: number;
+  intensity: number;
+  time_step: number;
+}
+
+export interface FloodPredictionResult {
+  affected_cells: PredictionCell[];
+  max_intensity: number;
+  flooded_percentage: number;
+  expires_at: string | null;
+  projection_label?: string;
+  disaster_type?: string;
+  generated_at?: string;
+}
+
+export interface FirePredictionResult {
+  burned_area: PredictionCell[];
+  max_intensity: number;
+  spread_direction_degrees: number;
+  expires_at: string | null;
+  projection_label?: string;
+  disaster_type?: string;
+  generated_at?: string;
+}
+
+/** GET /api/predictions/{zone_id} — both runs are computed live per request. */
+export interface ZonePredictionResponse {
+  zone_id: string;
+  zone_name?: string | null;
+  projection_label?: string;
+  last_flood: FloodPredictionResult | null;
+  last_fire: FirePredictionResult | null;
+}
+
+/** Per-zone row from the heatmap endpoints. */
+export interface HeatmapCell {
+  grid_id?: string;
+  zone_id: string;
+  zone_name?: string | null;
+  centroid_lat: number;
+  centroid_lng: number;
+  victim_count?: number;
+  area_km2?: number | null;
+  victim_density?: number | null;
+  disaster_type?: string | null;
+}
+
+export interface HeatmapResponse {
+  heatmap_type: string;
+  cells: HeatmapCell[];
+  grid_size: number;
+  bounding_box?: {
+    min_lat: number;
+    max_lat: number;
+    min_lng: number;
+    max_lng: number;
+  } | null;
 }
 
 // ── Zone APIs ─────────────────────────────────────────────────────────────
@@ -343,6 +415,16 @@ export const predictionsApi = {
     wind_speed_kmh?: number;
     resource_delta?: number;
   }) => api.post("/api/predictions/what-if", params),
+
+  /**
+   * Latest flood + fire projection for one zone.
+   *
+   * The engine runs live on every call (12h horizon, latest weather reading,
+   * current evidence and GIS context), so callers should cache this per zone
+   * rather than refetching on a tight interval. 404 when the zone is unknown.
+   */
+  forZone: (zone_id: string) =>
+    api.get<ZonePredictionResponse>(`/api/predictions/${zone_id}`),
 };
 
 // ── Route APIs ────────────────────────────────────────────────────────────
@@ -377,8 +459,24 @@ export const earthquakesApi = {
 // ── Heatmap APIs ──────────────────────────────────────────────────────────
 
 export const heatmapsApi = {
+  // Left untyped on purpose: DashboardLayout and HeatmapsPage consume this
+  // through their own looser HeatmapPayload shape, which has an index
+  // signature the narrower HeatmapResponse does not satisfy.
   combined: (zone_id?: string) =>
     api.get("/api/heatmaps/combined", {
+      params: zone_id ? { zone_id } : undefined,
+    }),
+
+  /**
+   * Per-zone victim density. Unauthenticated on the backend.
+   *
+   * Known backend bug: `cells[].victim_count` is currently computed as
+   * COUNT(Incident.id) — a count of incidents, not of people. The real victim
+   * number is only used as the density denominator, so treat the count as an
+   * incident tally and prefer `victim_density` for magnitude.
+   */
+  victimDensity: (zone_id?: string) =>
+    api.get<HeatmapResponse>("/api/heatmaps/victim-density", {
       params: zone_id ? { zone_id } : undefined,
     }),
 };

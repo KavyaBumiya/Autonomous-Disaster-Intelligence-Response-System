@@ -10,17 +10,32 @@ import {
   reportsApi,
   earthquakesApi,
   firmsApi,
+  predictionsApi,
+  routesApi,
+  weatherApi,
+  heatmapsApi,
   type Zone,
   type Incident,
   type Resource,
   type Report,
   type EarthquakeEvent,
+  type HeatmapResponse,
+  type RoutesResult,
+  type WeatherCurrent,
 } from "@/services/api";
 import { useSystemHealthStore } from "@/stores/systemHealthStore";
+import { topXaiFactor } from "@/utils/xaiFactors";
 import {
   LAYER_LABELS,
   LAYER_ORDER,
+  PER_ZONE_LAYER_LIMIT,
   type GlobeFire,
+  type GlobePredictionCell,
+  type GlobeRoute,
+  type GlobeShelter,
+  type GlobeVictimCell,
+  type GlobeWeather,
+  type GlobeXaiFactor,
   type LayerKey,
   type MapLayers,
 } from "@/components/mapLayers";
@@ -57,23 +72,43 @@ const LEGEND: Array<{ color: string; label: string }> = [
   { color: "#22d3ee", label: "Storm" },
   { color: "#a78bfa", label: "Citizen report" },
   { color: "#84cc16", label: "Resource" },
+  { color: "#ef4444", label: "High density" },
 ];
+
+/** Fan-out helpers: one failed zone must not blank out the whole layer. */
+
+function settled<T>(results: PromiseSettledResult<T>[]): T[] {
+  return results
+    .filter((r): r is PromiseFulfilledResult<T> => r.status === "fulfilled")
+    .map((r) => r.value);
+}
 
 export const RegionalMapPage: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+  const [selectedFeature, setSelectedFeature] = useState<{
+    kind: LayerKey;
+    id: string;
+  } | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [focus, setFocus] = useState<{ lat: number; lng: number; height?: number } | null>(null);
   const [resetToken, setResetToken] = useState(0);
   const [visible, setVisible] = useState<Record<LayerKey, boolean>>({
     zones: true,
     incidents: true,
+    predictions: true,
+    victims: true,
     resources: true,
+    shelters: true,
+    // One OSRM request per zone, so this starts switched off.
+    routes: false,
     reports: true,
     earthquakes: true,
     fires: true,
+    weather: true,
+    xai: false,
   });
   const socketRef = useRef<Socket | null>(null);
 
@@ -100,6 +135,8 @@ export const RegionalMapPage: React.FC = () => {
           void queryClient.invalidateQueries({ queryKey: ["incidents"] });
           void queryClient.invalidateQueries({ queryKey: ["zones"] });
           void queryClient.invalidateQueries({ queryKey: ["reports"] });
+          void queryClient.invalidateQueries({ queryKey: ["predictions"] });
+          void queryClient.invalidateQueries({ queryKey: ["victim-density"] });
         });
       },
     );
@@ -188,6 +225,214 @@ export const RegionalMapPage: React.FC = () => {
     retry: false,
   });
 
+  // ── Model projection ───────────────────────────────────────────────────
+  // One request per zone. The engine recomputes the 12h run on every call, so
+  // the interval is deliberately coarse.
+  const projectionZoneIds = useMemo(
+    () => zones.slice(0, PER_ZONE_LAYER_LIMIT).map((z) => z.zone_id),
+    [zones],
+  );
+
+  const predictionsQuery = useQuery<GlobePredictionCell[]>({
+    queryKey: ["predictions", "map", projectionZoneIds],
+    enabled: visible.predictions && projectionZoneIds.length > 0,
+    queryFn: async () => {
+      const results = await Promise.allSettled(
+        projectionZoneIds.map((zoneId) => predictionsApi.forZone(zoneId)),
+      );
+      const cells: GlobePredictionCell[] = [];
+      settled(results).forEach((res) => {
+        const data = res.data;
+        data.last_flood?.affected_cells?.forEach((cell) => {
+          cells.push({
+            zone_id: data.zone_id,
+            disaster_type: "flood",
+            lat: cell.lat,
+            lng: cell.lng,
+            intensity: cell.intensity,
+            time_step: cell.time_step,
+          });
+        });
+        data.last_fire?.burned_area?.forEach((cell) => {
+          cells.push({
+            zone_id: data.zone_id,
+            disaster_type: "fire",
+            lat: cell.lat,
+            lng: cell.lng,
+            intensity: cell.intensity,
+            time_step: cell.time_step,
+          });
+        });
+      });
+      return cells;
+    },
+    refetchInterval: 300000,
+    retry: false,
+  });
+
+  // ── Evacuation routes ──────────────────────────────────────────────────
+  // The hazard type per zone is taken from its most frequent active incident
+  // so the route avoids the road that actually matters.
+  const routeTargets = useMemo(() => {
+    const dominant = new Map<string, string>();
+    incidents.forEach((incident) => {
+      if (!incident.zone_id || !incident.disaster_type) return;
+      dominant.set(incident.zone_id, incident.disaster_type);
+    });
+    return zones.slice(0, PER_ZONE_LAYER_LIMIT).map((z) => ({
+      zone_id: z.zone_id,
+      disaster_type: dominant.get(z.zone_id) ?? "flood",
+    }));
+  }, [zones, incidents]);
+
+  const routesQuery = useQuery<GlobeRoute[]>({
+    queryKey: ["routes", "map", routeTargets],
+    enabled: visible.routes && routeTargets.length > 0,
+    queryFn: async () => {
+      const results = await Promise.allSettled(
+        routeTargets.map((t) =>
+          routesApi.compute({ zone_id: t.zone_id, disaster_type: t.disaster_type }),
+        ),
+      );
+      const routes: GlobeRoute[] = [];
+      settled(results).forEach((res) => {
+        const data: RoutesResult = res.data;
+        const geometry = (data.geometry ?? []).filter(
+          (pair) =>
+            Array.isArray(pair) &&
+            pair.length >= 2 &&
+            Number.isFinite(pair[0]) &&
+            Number.isFinite(pair[1]),
+        ) as [number, number][];
+        if (geometry.length < 2) return;
+        routes.push({
+          zone_id: data.zone_id,
+          zone_name: data.zone_name ?? null,
+          disaster_type: data.disaster_type,
+          geometry,
+          distance_km: data.primary_route?.distance_km ?? 0,
+          estimated_minutes: data.primary_route?.estimated_minutes ?? 0,
+          source: data.source ?? null,
+          engine: data.engine ?? null,
+          blocked_roads: data.blocked_roads ?? [],
+        });
+      });
+      return routes;
+    },
+    refetchInterval: 300000,
+    retry: false,
+  });
+
+  // ── Weather ────────────────────────────────────────────────────────────
+  const weatherQuery = useQuery<GlobeWeather[]>({
+    queryKey: ["weather", "map", projectionZoneIds],
+    enabled: visible.weather && projectionZoneIds.length > 0,
+    queryFn: async () => {
+      const targets = zones.slice(0, PER_ZONE_LAYER_LIMIT);
+      // Tag each promise with its zone so a rejected sibling cannot shift the
+      // index and misattribute a reading to the wrong zone.
+      const results = await Promise.allSettled(
+        targets.map((z) =>
+          weatherApi
+            .current(z.centroid_lat, z.centroid_lng)
+            .then((res) => ({ zoneId: z.zone_id, res })),
+        ),
+      );
+      const readings: GlobeWeather[] = [];
+      results.forEach((outcome) => {
+        if (outcome.status !== "fulfilled") return;
+        const { zoneId, res } = outcome.value;
+        const data: WeatherCurrent = res.data;
+        if (!Number.isFinite(data.lat) || !Number.isFinite(data.lng)) return;
+        readings.push({
+          lat: data.lat,
+          lng: data.lng,
+          zone_id: zoneId,
+          risk_score: data.risk_score ?? 0,
+          rainfall_mm_hr: data.rainfall_mm_hr ?? 0,
+          wind_speed_kmh: data.wind_speed_kmh ?? 0,
+          temperature_c: data.temperature_c,
+          weather_main: data.weather_main,
+          provider: data.provider,
+          from_cache: data.from_cache,
+        });
+      });
+      return readings;
+    },
+    refetchInterval: 300000,
+    retry: false,
+  });
+
+  // ── Victim density ─────────────────────────────────────────────────────
+  const victimDensityQuery = useQuery<GlobeVictimCell[]>({
+    queryKey: ["victim-density", "map"],
+    enabled: visible.victims,
+    queryFn: async () => {
+      const res = await heatmapsApi.victimDensity();
+      const data: HeatmapResponse = res.data;
+      return (data.cells ?? [])
+        .filter((c) => Number.isFinite(c.centroid_lat) && Number.isFinite(c.centroid_lng))
+        .map((c) => ({
+          zone_id: c.zone_id,
+          zone_name: c.zone_name,
+          lat: c.centroid_lat,
+          lng: c.centroid_lng,
+          victim_count: c.victim_count ?? 0,
+          victim_density: c.victim_density ?? 0,
+          area_km2: c.area_km2,
+        }));
+    },
+    refetchInterval: 120000,
+    retry: false,
+  });
+
+  const shelters = useMemo<GlobeShelter[]>(
+    () =>
+      resources
+        .filter((r) => r.resource_type === "shelter")
+        .filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lng))
+        .map((r) => ({
+          resource_id: r.resource_id,
+          name: r.name,
+          lat: Number(r.lat),
+          lng: Number(r.lng),
+          capacity: r.capacity ?? 0,
+          current_load: r.current_load ?? 0,
+          available: r.available !== false,
+        })),
+    [resources],
+  );
+
+  /**
+   * XAI overlay, derived from `xai_reasoning` on the incidents already in
+   * memory. This deliberately avoids GET /api/command/explain per incident,
+   * which would fire one LLM narrative call for every marker on the map.
+   */
+  const xaiFactors = useMemo<GlobeXaiFactor[]>(
+    () =>
+      incidents.flatMap((incident) => {
+        const zone = zones.find((z) => z.zone_id === incident.zone_id);
+        const lat = incident.lat ?? zone?.centroid_lat;
+        const lng = incident.lng ?? zone?.centroid_lng;
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
+        const top = topXaiFactor(incident.xai_reasoning);
+        if (!top) return [];
+        return [
+          {
+            incident_id: incident.incident_id,
+            lat: Number(lat),
+            lng: Number(lng),
+            priority_score: incident.priority_score ?? 0,
+            priority_band: incident.priority_band,
+            top_factor: top.name,
+            top_factor_points: top.points,
+            top_factor_weight_pct: top.weightPct,
+          },
+        ];
+      }),
+    [incidents, zones],
+  );
+
   const layers = useMemo<MapLayers>(
     () => ({
       zones: zones.map((z) => ({
@@ -209,6 +454,8 @@ export const RegionalMapPage: React.FC = () => {
         severity_score: i.severity_score,
         status: i.status,
       })),
+      predictions: predictionsQuery.data ?? [],
+      victims: victimDensityQuery.data ?? [],
       resources: resources.map((r) => ({
         resource_id: r.resource_id,
         name: r.name,
@@ -219,6 +466,8 @@ export const RegionalMapPage: React.FC = () => {
         current_load: r.current_load,
         capacity: r.capacity,
       })),
+      shelters,
+      routes: routesQuery.data ?? [],
       earthquakes: earthquakes.map((e) => ({
         id: e.id,
         usgs_id: e.usgs_id,
@@ -229,6 +478,8 @@ export const RegionalMapPage: React.FC = () => {
         risk_score: e.risk_score,
       })),
       fires: firesQuery.data?.fires ?? [],
+      weather: weatherQuery.data ?? [],
+      xai: xaiFactors,
       reports: reports.map((r) => ({
         report_id: r.report_id ?? r.id,
         lat: r.lat,
@@ -237,17 +488,36 @@ export const RegionalMapPage: React.FC = () => {
         trust_score: r.trust_score,
       })),
     }),
-    [zones, incidents, resources, earthquakes, firesQuery.data, reports],
+    [
+      zones,
+      incidents,
+      resources,
+      reports,
+      earthquakes,
+      shelters,
+      xaiFactors,
+      predictionsQuery.data,
+      victimDensityQuery.data,
+      routesQuery.data,
+      weatherQuery.data,
+      firesQuery.data,
+    ],
   );
 
   const counts = useMemo<Record<LayerKey, number>>(
     () => ({
       zones: layers.zones.length,
       incidents: layers.incidents.length,
+      predictions: layers.predictions.length,
+      victims: layers.victims.length,
       resources: layers.resources.length,
+      shelters: layers.shelters.length,
+      routes: layers.routes.length,
       reports: layers.reports.length,
       earthquakes: layers.earthquakes.length,
       fires: layers.fires.length,
+      weather: layers.weather.length,
+      xai: layers.xai.length,
     }),
     [layers],
   );
@@ -256,6 +526,96 @@ export const RegionalMapPage: React.FC = () => {
     () => incidents.find((i) => i.incident_id === selectedIncidentId) ?? null,
     [incidents, selectedIncidentId],
   );
+
+  const incidentXai = useMemo(
+    () => topXaiFactor(selectedIncident?.xai_reasoning),
+    [selectedIncident],
+  );
+
+  /** Detail rows for whichever non-incident layer entity was last picked. */
+  const featureRows = useMemo<Array<[string, string]>>(() => {
+    if (!selectedFeature) return [];
+    const { kind, id } = selectedFeature;
+
+    if (kind === "predictions") {
+      const cells = layers.predictions.filter((c) => `${c.zone_id}|${c.disaster_type}` === id);
+      if (cells.length === 0) return [];
+      const peak = cells.reduce((a, b) => (b.intensity > a.intensity ? b : a));
+      return [
+        ["Run", id.replace("|", " / ")],
+        ["Cells", String(cells.length)],
+        ["Peak intensity", peak.intensity.toFixed(3)],
+        ["Peak time step", String(peak.time_step)],
+      ];
+    }
+
+    if (kind === "victims") {
+      const cell = layers.victims.find((c) => c.zone_id === id);
+      if (!cell) return [];
+      return [
+        ["Zone", cell.zone_name ?? cell.zone_id],
+        ["Incidents w/ victims", String(cell.victim_count)],
+        ["Victim density", (cell.victim_density ?? 0).toFixed(3)],
+        ...(cell.area_km2 != null ? ([["Area", `${cell.area_km2.toFixed(1)} km²`]] as Array<[string, string]>) : []),
+      ];
+    }
+
+    if (kind === "shelters") {
+      const shelter = layers.shelters.find((s) => s.resource_id === id);
+      if (!shelter) return [];
+      const capacity = shelter.capacity ?? 0;
+      const load = shelter.current_load ?? 0;
+      return [
+        ["Shelter", shelter.name ?? id],
+        ["Capacity", String(capacity)],
+        ["Occupied", String(load)],
+        ["Free", String(Math.max(0, capacity - load))],
+      ];
+    }
+
+    if (kind === "routes") {
+      const route = layers.routes.find((r) => r.zone_id === id);
+      if (!route) return [];
+      return [
+        ["Zone", route.zone_name ?? route.zone_id],
+        ["Hazard", route.disaster_type],
+        ["Distance", `${route.distance_km.toFixed(1)} km`],
+        ["ETA", `${route.estimated_minutes} min`],
+        ["Planner", route.source ?? route.engine ?? "unknown"],
+        ["Blocked roads", route.blocked_roads.length ? route.blocked_roads.join(", ") : "none"],
+      ];
+    }
+
+    if (kind === "weather") {
+      const wx = layers.weather.find((w) => (w.zone_id ?? "") === id) ?? layers.weather[0];
+      if (!wx) return [];
+      return [
+        ["Conditions", wx.weather_main],
+        ["Risk score", wx.risk_score.toFixed(3)],
+        ["Rainfall", `${wx.rainfall_mm_hr} mm/hr`],
+        ["Wind", `${wx.wind_speed_kmh} km/h`],
+        [
+          "Temperature",
+          wx.temperature_c == null ? "n/a" : `${wx.temperature_c.toFixed(1)} °C`,
+        ],
+        ["Provider", `${wx.provider}${wx.from_cache ? " (cached)" : ""}`],
+      ];
+    }
+
+    if (kind === "xai") {
+      const entry = layers.xai.find((x) => x.incident_id === id);
+      if (!entry) return [];
+      return [
+        ["Incident", entry.incident_id],
+        ["Top factor", entry.top_factor],
+        ["Contribution", `+${entry.top_factor_points.toFixed(1)} pts`],
+        ["PRD weight", `${entry.top_factor_weight_pct}%`],
+        ["Priority", `${entry.priority_score.toFixed(0)} (${entry.priority_band ?? "—"})`],
+      ];
+    }
+
+    return [];
+  }, [selectedFeature, layers]);
 
   const kpis = useMemo(() => {
     const critical = incidents.filter((i) => (i.priority_score ?? 0) >= 70).length;
@@ -282,6 +642,10 @@ export const RegionalMapPage: React.FC = () => {
           resetToken={resetToken}
           onSelectZone={(id) => setSelectedZoneId(id)}
           onSelectIncident={(id) => setSelectedIncidentId(id)}
+          onSelectFeature={(kind, id) => {
+            setSelectedFeature({ kind, id });
+            setSelectedIncidentId(null);
+          }}
         />
       </Suspense>
 
@@ -405,6 +769,16 @@ export const RegionalMapPage: React.FC = () => {
             <div>Priority: {Math.round(selectedIncident.priority_score ?? 0)}</div>
             <div>Severity: {Math.round(selectedIncident.severity_score ?? 0)}</div>
             <div>Reports: {selectedIncident.report_count}</div>
+            <div>Victims: {selectedIncident.victim_count}</div>
+            {incidentXai && (
+              <div className="border-t border-white/10 pt-1.5">
+                <div className="ops-kicker text-[9px]">Top XAI factor</div>
+                <div className="ops-mono text-[11px] text-slate-300">
+                  {incidentXai.name} +{incidentXai.points.toFixed(1)} pts
+                  <span className="text-slate-500"> ({incidentXai.weightPct}%)</span>
+                </div>
+              </div>
+            )}
           </div>
           <div className="mt-3 flex gap-2">
             <button
@@ -422,6 +796,41 @@ export const RegionalMapPage: React.FC = () => {
               Close
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Right: whichever prediction/victim/shelter/route/weather/xai entity
+          was picked, falling through to the incident panel otherwise. */}
+      {selectedFeature && featureRows.length > 0 && (
+        <div className="absolute right-4 top-20 z-20 w-[300px] rounded-xl border border-[var(--line)] bg-[rgba(7,16,28,.9)] p-4 backdrop-blur">
+          <div className="ops-kicker mb-1 text-[9px]">
+            {LAYER_LABELS[selectedFeature.kind]}
+          </div>
+          <div className="ops-title-sm mb-2">{selectedFeature.id}</div>
+          <dl className="space-y-1.5 text-xs">
+            {featureRows.map(([label, value]) => (
+              <div key={label} className="flex justify-between gap-3">
+                <dt className="text-slate-500">{label}</dt>
+                <dd className="ops-mono text-right text-slate-300">{value}</dd>
+              </div>
+            ))}
+          </dl>
+          {selectedFeature.kind === "xai" && (
+            <button
+              type="button"
+              className="ops-button ops-button-primary ops-button-sm mt-3 w-full"
+              onClick={() => navigate(`/incidents/${selectedFeature.id}`)}
+            >
+              Open incident
+            </button>
+          )}
+          <button
+            type="button"
+            className="ops-button ops-button-sm mt-2 w-full"
+            onClick={() => setSelectedFeature(null)}
+          >
+            Close
+          </button>
         </div>
       )}
 
