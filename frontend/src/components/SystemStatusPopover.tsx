@@ -12,7 +12,7 @@ import { StatusDot } from "./StatusDot";
 const ROW_KEYS: ServiceKey[] = [
   "api",
   "auth",
-  "groq",
+  "ai",
   "predictions",
   "maps",
   "realtime",
@@ -121,9 +121,9 @@ export const SystemStatusPopover: React.FC<SystemStatusPopoverProps> = ({
           <p className="mt-2 text-slate-400">
             <strong>Reason:</strong> {reasonText}
           </p>
-          {health.groq === "ONLINE" && health.groqModel && (
+          {health.ai === "ONLINE" && health.aiModel && (
             <p className="ops-mono mt-1 text-[10px] text-slate-500">
-              Model: {health.groqModel}
+              Model: {health.aiModel}
             </p>
           )}
         </div>
@@ -138,7 +138,7 @@ export const SystemStatusPopover: React.FC<SystemStatusPopoverProps> = ({
         </div>
 
         <div className="border-t border-white/10 px-4 py-2 text-[10px] text-slate-500">
-          Decision Engine is local and deterministic. Groq AI is advisory only.
+          Decision Engine is local and deterministic. NVIDIA AI is advisory only.
         </div>
       </div>
     </>

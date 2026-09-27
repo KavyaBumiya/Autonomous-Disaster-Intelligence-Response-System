@@ -61,8 +61,8 @@ export const IncidentDetail: React.FC = () => {
   const { incidentId } = useParams<{ incidentId: string }>();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
-  const { groq: groqStatus } = useSystemHealth();
-  const groqUnavailable = groqStatus === "OFFLINE" || groqStatus === "DEGRADED";
+  const { ai: aiStatus } = useSystemHealth();
+  const aiUnavailable = aiStatus === "OFFLINE" || aiStatus === "DEGRADED";
 
   const { data: incident, isLoading, isError } = useQuery<Incident>({
     queryKey: ["incident", incidentId],
@@ -318,9 +318,9 @@ export const IncidentDetail: React.FC = () => {
                 {incident.groq_summary && (
                   <p className="whitespace-pre-wrap">{incident.groq_summary}</p>
                 )}
-                {!incident.groq_summary && groqUnavailable && (
+                {!incident.groq_summary && aiUnavailable && (
                   <div className="rounded-lg border border-[#f3b562]/30 bg-[#f3b562]/10 px-3 py-2 text-xs text-[#f3b562]">
-                    AI summary unavailable while Groq is offline. Deterministic XAI evidence and
+                    AI summary unavailable while NVIDIA is offline. Deterministic XAI evidence and
                     core incident data remain available.
                   </div>
                 )}
@@ -453,7 +453,7 @@ export const IncidentDetail: React.FC = () => {
                   <p className="text-sm leading-6 text-slate-300 whitespace-pre-wrap">
                     {incident.groq_summary ||
                       incident.xai_reasoning ||
-                      (groqUnavailable
+                      (aiUnavailable
                         ? "AI narrative unavailable. Deterministic priority, field evidence, and operational tabs remain online."
                         : "No narrative available yet. Evidence builds as field reports arrive.")}
                   </p>

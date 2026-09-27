@@ -37,7 +37,7 @@ CANONICAL_GROUPS: dict[str, tuple[str, ...]] = {
     "gis": ("osm/overpass",),
     "routing": ("osrm",),
     "geocoding": ("nominatim", "photon"),
-    "groq": ("groq",),
+    "ai": ("nvidia",),
     "natural_events": ("nasa/eonet",),
 }
 
@@ -146,7 +146,7 @@ def circuit_open(provider: str) -> bool:
 def canonical_statuses(snap: dict[str, dict[str, Any]] | None = None) -> dict[str, str]:
     """Canonical provider group statuses for /api/health (plan Phase 16).
 
-    Keys: weather, seismic, gis, routing, geocoding, groq →
+    Keys: weather, seismic, gis, routing, geocoding, ai →
     ONLINE | DEGRADED | OFFLINE | UNKNOWN (never-probed groups stay UNKNOWN).
 
     Multi-source groups (weather = open-meteo + met-norway, geocoding =

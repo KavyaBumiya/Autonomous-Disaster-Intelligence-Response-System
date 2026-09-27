@@ -14,7 +14,7 @@ from sqlalchemy import delete, select
 
 from app.core.database import AsyncSessionLocal
 from app.integrations.base import ConnectorError
-from app.services.groq_gateway import COMMAND_TOOLS, ToolExecutor
+from app.services.ai_gateway import COMMAND_TOOLS, ToolExecutor
 
 
 def run(coro):

@@ -2,10 +2,10 @@
  * AEGIS-AI — Health check service
  * Separate endpoints for separate concerns:
  *   - GET /api/health           → core backend/API liveness
- *   - GET /api/command/health   → Groq AI Gateway configuration
+ *   - GET /api/command/health   → NVIDIA NIM AI Gateway configuration
  * Never collapse these into one boolean.
  */
-import api, { type GroqHealthResponse } from "./api";
+import api, { type AIHealthResponse } from "./api";
 
 export interface ProviderStatus {
   status: string;
@@ -28,7 +28,7 @@ export type HealthCheckResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; code?: number };
 
-/** Core application health — NOT the Groq/command health endpoint. */
+/** Core application health — NOT the NVIDIA/command health endpoint. */
 export async function getApiHealth(): Promise<HealthCheckResult<ApiHealthResponse>> {
   try {
     const res = await api.get<ApiHealthResponse>("/api/health", { timeout: 8000 });
@@ -38,10 +38,10 @@ export async function getApiHealth(): Promise<HealthCheckResult<ApiHealthRespons
   }
 }
 
-/** Groq / Command Center health only. */
-export async function getCommandHealth(): Promise<HealthCheckResult<GroqHealthResponse>> {
+/** NVIDIA / Command Center health only. */
+export async function getCommandHealth(): Promise<HealthCheckResult<AIHealthResponse>> {
   try {
-    const res = await api.get<GroqHealthResponse>("/api/command/health", { timeout: 8000 });
+    const res = await api.get<AIHealthResponse>("/api/command/health", { timeout: 8000 });
     return { ok: true, data: res.data };
   } catch (err) {
     return { ok: false, error: classifyHealthError(err) };

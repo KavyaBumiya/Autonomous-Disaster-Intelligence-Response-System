@@ -1,7 +1,7 @@
 /**
  * AEGIS-AI — Command Center
  * ==========================
- * Natural-language interface backed by the Groq AI Gateway.
+ * Natural-language interface backed by the NVIDIA NIM AI Gateway.
  *
  * PRD §14 requirements implemented here:
  *   ✓ Live disaster map reference (link to dashboard)
@@ -9,10 +9,10 @@
  *   ✓ Evidence panel (XAI reasoning display)
  *   ✓ Approval queue (human gate — AI cannot approve)
  *   ✓ Function call transparency (shows which tools were invoked)
- *   ✓ Groq online / offline status indicator
+ *   ✓ NVIDIA online / offline status indicator
  *   ✓ Quick-action buttons for common commander queries
  *
- * SECURITY: The Groq API key never reaches this component.
+ * SECURITY: The NVIDIA API key never reaches this component.
  *   Queries go to POST /api/command/query — the backend handles the key.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -41,7 +41,7 @@ interface ChatMessage {
   timestamp:    Date;
   functionCalls?: { name: string; arguments: Record<string, unknown> }[];
   executionResults?: Record<string, unknown>[];
-  groqCallId?:  string;
+  aiCallId?:  string;
   modelUsed?:   string;
   isError?:     boolean;
 }
@@ -86,11 +86,11 @@ export const CommandCenter: React.FC = () => {
     () => `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
   );
 
-  // ── Groq health (shared store — never conflates API vs AI) ─────────────
+  // ── NVIDIA health (shared store — never conflates API vs AI) ─────────────
   const systemHealth = useSystemHealth();
-  const groqOnline = systemHealth.groq === "ONLINE";
-  const groqStatus = systemHealth.groq;
-  const healthModel = systemHealth.groqModel;
+  const aiOnline = systemHealth.ai === "ONLINE";
+  const aiStatus = systemHealth.ai;
+  const healthModel = systemHealth.aiModel;
 
   // ── Approval queue ──────────────────────────────────────────────────────
   const { data: queueData, refetch: refetchQueue } = useQuery({
@@ -128,7 +128,7 @@ export const CommandCenter: React.FC = () => {
         timestamp:        new Date(),
         functionCalls:    data.function_calls,
         executionResults: data.execution_results,
-        groqCallId:       data.groq_call_id,
+        aiCallId:       data.ai_call_id,
         modelUsed:        data.model_used,
       };
       setMessages((prev) => [...prev, assistantMsg]);
@@ -161,11 +161,11 @@ export const CommandCenter: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const welcomeText = groqOnline
-    ? `Groq AI Gateway ready (${healthModel ?? "qwen/qwen3.8-27b"}). Ask anything about active incidents, resources, predictions, or routing.`
-    : groqStatus === "UNKNOWN"
-      ? "Checking Groq AI Gateway… Core data APIs remain available."
-      : "Groq AI unavailable. Deterministic engine and all data APIs are still operational — incident data, priority scores, resources, and approvals remain online.";
+  const welcomeText = aiOnline
+    ? `NVIDIA NIM AI Gateway ready (${healthModel ?? "deepseek-ai/deepseek-v4.1-flash"}). Ask anything about active incidents, resources, predictions, or routing.`
+    : aiStatus === "UNKNOWN"
+      ? "Checking NVIDIA NIM AI Gateway… Core data APIs remain available."
+      : "NVIDIA AI unavailable. Deterministic engine and all data APIs are still operational — incident data, priority scores, resources, and approvals remain online.";
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -204,7 +204,7 @@ export const CommandCenter: React.FC = () => {
         <div className="ops-kicker mb-2">AI-assisted incident command</div>
         <h1 className="text-3xl font-bold tracking-tight">Command center</h1>
         <p className="mt-2 max-w-2xl text-sm text-slate-400">
-          Natural-language interface backed by the Groq AI Gateway. The LLM calls tools and
+          Natural-language interface backed by the NVIDIA NIM AI Gateway. The LLM calls tools and
           explains evidence — it never assigns priority or dispatches without your approval.
         </p>
       </div>
@@ -245,12 +245,12 @@ export const CommandCenter: React.FC = () => {
         </div>
       </div>
 
-        {/* Groq degraded banner — core services stay usable with RETRY */}
-        {!groqOnline && groqStatus !== "UNKNOWN" && (
+        {/* NVIDIA degraded banner — core services stay usable with RETRY */}
+        {!aiOnline && aiStatus !== "UNKNOWN" && (
           <div className="ops-alert ops-alert-warning mb-4 flex flex-wrap items-center gap-3" role="status">
             <span aria-hidden="true">△</span>
             <span className="text-sm">
-              <strong>AI advisory unavailable.</strong> Groq is offline — chat replies may use
+              <strong>AI advisory unavailable.</strong> NVIDIA is offline — chat replies may use
               deterministic fallback. Incident data, predictions, resources, and the approval
               queue remain online.
             </span>
@@ -274,19 +274,19 @@ export const CommandCenter: React.FC = () => {
               <div className="ops-panel flex h-[520px] flex-col overflow-hidden">
                 <div className="ops-panel-header shrink-0">
                   <div>
-                    <div className="ops-kicker">Groq AI Gateway</div>
+                    <div className="ops-kicker">NVIDIA NIM AI Gateway</div>
                     <div className="ops-title">Commander interface</div>
                   </div>
                   <span
                     className={`ops-mono text-xs ${
-                      groqOnline
+                      aiOnline
                         ? "text-[#38d9c4]"
-                        : groqStatus === "UNKNOWN"
+                        : aiStatus === "UNKNOWN"
                           ? "text-slate-400"
                           : "text-[#f3b562]"
                     }`}
                   >
-                    {groqOnline ? "● LIVE" : groqStatus === "UNKNOWN" ? "○ CHECKING" : "○ OFFLINE"}
+                    {aiOnline ? "● LIVE" : aiStatus === "UNKNOWN" ? "○ CHECKING" : "○ OFFLINE"}
                   </span>
                 </div>
 
@@ -317,7 +317,7 @@ export const CommandCenter: React.FC = () => {
                           />
                         ))}
                       </span>
-                      <span className="text-xs">Querying Groq…</span>
+                      <span className="text-xs">Querying NVIDIA…</span>
                     </div>
                   )}
                   <div ref={chatEndRef} />
@@ -333,11 +333,11 @@ export const CommandCenter: React.FC = () => {
                       onChange={(e) => setInputValue(e.target.value)}
                       onKeyDown={handleKey}
                       placeholder={
-                        groqOnline
+                        aiOnline
                           ? "Ask anything — incidents, resources, predictions, routes…"
-                          : groqStatus === "UNKNOWN"
+                          : aiStatus === "UNKNOWN"
                             ? "Checking AI gateway…"
-                            : "Groq offline — queries will use deterministic fallback"
+                            : "NVIDIA offline — queries will use deterministic fallback"
                       }
                       disabled={sendMutation.isPending}
                       className="flex-1 rounded-lg border border-white/10 bg-white/[.05] px-3 py-2 text-sm text-white placeholder-slate-500 outline-none transition focus:border-[#38d9c4]/60 focus:ring-1 focus:ring-[#38d9c4]/30 disabled:opacity-50"
@@ -408,7 +408,7 @@ export const CommandCenter: React.FC = () => {
               <div className="ops-panel p-4">
                 <div className="ops-kicker mb-2">Architecture note</div>
                 <ul className="space-y-1.5 text-xs leading-5 text-slate-400">
-                  <li>✓ Groq understands queries & calls tools</li>
+                  <li>✓ NVIDIA understands queries & calls tools</li>
                   <li>✓ Decision Engine produces priority scores</li>
                   <li>✓ XAI evidence shown for every score</li>
                   <li>✗ LLM cannot assign priority or dispatch</li>

@@ -24,16 +24,16 @@ interface SystemHealthStore extends SystemHealth {
 function buildHealth(
   partial: Pick<
     SystemHealth,
-    "api" | "database" | "auth" | "groq" | "predictions" | "maps" | "realtime" | "weather" | "seismic"
+    "api" | "database" | "auth" | "ai" | "predictions" | "maps" | "realtime" | "weather" | "seismic"
   > &
-    Partial<Pick<SystemHealth, "groqModel" | "checking" | "lastChecked">>,
+    Partial<Pick<SystemHealth, "aiModel" | "checking" | "lastChecked">>,
 ): SystemHealth {
   const checking = partial.checking ?? false;
   const overallInput = {
     api: partial.api,
     database: partial.database,
     auth: partial.auth,
-    groq: partial.groq,
+    ai: partial.ai,
     predictions: partial.predictions,
     maps: partial.maps,
     realtime: partial.realtime,
@@ -47,7 +47,7 @@ function buildHealth(
     api: partial.api,
     database: partial.database,
     auth: partial.auth,
-    groq: partial.groq,
+    ai: partial.ai,
     predictions: partial.predictions,
     maps: partial.maps,
     realtime: partial.realtime,
@@ -57,7 +57,7 @@ function buildHealth(
     overall,
     reasons,
     lastChecked: partial.lastChecked ?? new Date().toISOString(),
-    groqModel: partial.groqModel ?? null,
+    aiModel: partial.aiModel ?? null,
   };
 }
 
@@ -76,18 +76,18 @@ async function runChecks(): Promise<void> {
   // when the backend is reachable.
   const auth: ServiceStatus = api === "OFFLINE" ? "UNKNOWN" : "ONLINE";
 
-  let groq: ServiceStatus;
-  let groqModel: string | null = prev.groqModel ?? null;
+  let ai: ServiceStatus;
+  let aiModel: string | null = prev.aiModel ?? null;
   if (api === "OFFLINE") {
-    groq = "UNKNOWN";
+    ai = "UNKNOWN";
   } else if (!cmdRes.ok) {
-    groq = "OFFLINE";
-  } else if (cmdRes.data.groq_available) {
-    groq = "ONLINE";
-    groqModel = cmdRes.data.model;
+    ai = "OFFLINE";
+  } else if (cmdRes.data.ai_available) {
+    ai = "ONLINE";
+    aiModel = cmdRes.data.model;
   } else {
-    groq = "DEGRADED";
-    groqModel = cmdRes.data.model ?? null;
+    ai = "DEGRADED";
+    aiModel = cmdRes.data.model ?? null;
   }
 
   const predictions: ServiceStatus =
@@ -128,8 +128,8 @@ async function runChecks(): Promise<void> {
       api,
       database,
       auth,
-      groq,
-      groqModel,
+      ai,
+      aiModel,
       predictions,
       maps,
       realtime,
@@ -142,7 +142,7 @@ async function runChecks(): Promise<void> {
 
 export const useSystemHealthStore = create<SystemHealthStore>((set, get) => ({
   ...createInitialHealth(),
-  groqModel: null,
+  aiModel: null,
 
   refresh: async () => {
     await runChecks();
@@ -156,8 +156,8 @@ export const useSystemHealthStore = create<SystemHealthStore>((set, get) => ({
         api: prev.api,
         database: prev.database,
         auth: prev.auth,
-        groq: prev.groq,
-        groqModel: prev.groqModel,
+        ai: prev.ai,
+        aiModel: prev.aiModel,
         predictions: prev.predictions,
         maps: prev.maps,
         realtime: status,
@@ -175,8 +175,8 @@ export const useSystemHealthStore = create<SystemHealthStore>((set, get) => ({
         api: prev.api,
         database: prev.database,
         auth: prev.auth,
-        groq: prev.groq,
-        groqModel: prev.groqModel,
+        ai: prev.ai,
+        aiModel: prev.aiModel,
         predictions: prev.predictions,
         maps: status,
         realtime: prev.realtime,
@@ -194,8 +194,8 @@ export const useSystemHealthStore = create<SystemHealthStore>((set, get) => ({
         api: prev.api,
         database: prev.database,
         auth: prev.auth,
-        groq: prev.groq,
-        groqModel: prev.groqModel,
+        ai: prev.ai,
+        aiModel: prev.aiModel,
         predictions: status,
         maps: prev.maps,
         realtime: prev.realtime,

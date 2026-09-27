@@ -133,7 +133,7 @@ async def ingest_voice_report(
     lat: float = Form(default=None),
     lng: float = Form(default=None),
 ):
-    """Accept a voice audio upload; transcribes via Groq Whisper (or local fallback) in background."""
+    """Accept a voice audio upload; transcribes with local openai-whisper in the background."""
     if audio_file.content_type not in ALLOWED_AUDIO_TYPES:
         raise HTTPException(415, detail=f"Unsupported audio type: {audio_file.content_type}")
 
@@ -173,11 +173,7 @@ async def ingest_voice_report(
         report_id=report.id,
         file_path=str(file_path),
         file_size_bytes=len(content),
-        whisper_model=(
-            settings.groq_stt_model
-            if (settings.stt_provider or "").lower() == "groq" and settings.groq_api_key
-            else settings.whisper_model
-        ),
+        whisper_model=settings.whisper_model,
     )
     db.add(audio_upload)
     await db.commit()

@@ -4,14 +4,14 @@ AEGIS-AI — Agent Orchestrator
 Runs the full intelligence pipeline after every new report is stored.
 
 Phase 2 pipeline (updated):
-  1. Groq report parser  — structured extraction from citizen text (fast, async)
+  1. AI report parser  — structured extraction from citizen text (fast, async)
   2. Zone upsert          — find or create zone from lat/lng
   3. Verification Agent   — multi-signal trust scoring
   4. Detection Agent      — disaster type classification
   5. Decision Engine      — deterministic PRD-aligned priority formula
   6. WebSocket events     — real-time dashboard updates
 
-PRD §2 constraint: The LLM (Groq) is called ONLY in step 1 to parse raw text
+PRD §2 constraint: The LLM is called ONLY in step 1 to parse raw text
 into structured fields. All scoring and decision-making is deterministic.
 """
 from __future__ import annotations
@@ -49,15 +49,15 @@ async def process_report(report: Report, db: AsyncSession) -> None:
 
     Steps
     -----
-    1. Parse raw text with Groq (if available) → enrich report fields
+    1. Parse raw text with the AI Gateway (if available) → enrich report fields
     2. Upsert zone from coordinates
     3. Verification Agent → trust score
     4. Detection Agent    → disaster type + severity
     5. Decision Engine    → priority score + XAI
     6. Emit WebSocket events
     """
-    # ── Step 1: Groq report parsing (best-effort, never blocks pipeline) ──
-    await _enrich_with_groq(report)
+    # ── Step 1: AI report parsing (best-effort, never blocks pipeline) ──
+    await _enrich_with_ai(report)
 
     # ── Step 1b: Geocode fallback (Nominatim) when only text location ────
     if (not report.lat or not report.lng) and (report.location_string or "").strip():
@@ -182,7 +182,7 @@ async def process_report(report: Report, db: AsyncSession) -> None:
 
     await db.flush()
 
-    # ── Step 5b: Persist Groq narrative from engine evidence (PRD §8) ────
+    # ── Step 5b: Persist AI narrative from engine evidence (PRD §8) ────
     try:
         from app.services.incident_narrative import ensure_incident_narrative
         # Refresh narrative when priority moved enough to matter for briefing
@@ -230,9 +230,9 @@ async def process_report(report: Report, db: AsyncSession) -> None:
 
 # ── Internal helpers ───────────────────────────────────────────────────────
 
-async def _enrich_with_groq(report: Report) -> None:
+async def _enrich_with_ai(report: Report) -> None:
     """
-    Use Groq to normalise (translate) and extract structured fields from the
+    Use the AI Gateway to normalise (translate) and extract structured fields from the
     raw report text. Runs best-effort — any failure is silently logged and the
     deterministic pipeline continues (PRD §2: LLM never blocks decisions).
     """
@@ -241,7 +241,7 @@ async def _enrich_with_groq(report: Report) -> None:
         return
 
     try:
-        from app.services.groq_gateway import groq_gateway
+        from app.services.ai_gateway import ai_gateway
         from app.services.report_parser import parse_citizen_report, parsed_report_to_nlp_hints
 
         # ── Multilingual normalisation (PRD §4-G) ─────────────────────────
@@ -249,7 +249,7 @@ async def _enrich_with_groq(report: Report) -> None:
         # English translation when the source is not English.
         parse_text = raw_text
         try:
-            translation = await groq_gateway.translate(raw_text)
+            translation = await ai_gateway.translate(raw_text)
             if translation.was_translated:
                 parse_text = translation.translated_text
                 # Original citizen wording stays on message_text/transcript;
@@ -271,7 +271,7 @@ async def _enrich_with_groq(report: Report) -> None:
         if hints.get("disaster_type") and not report.disaster_type:
             report.disaster_type = hints["disaster_type"]
 
-        # Store Groq parse fields for audit (migration 0003 columns)
+        # Store LLM parse fields for audit (legacy groq_* column names, migration 0003)
         if hasattr(report, "groq_parsed_hazard") and parsed.hazard_type != "unknown":
             report.groq_parsed_hazard    = parsed.hazard_type
             report.groq_parsed_urgency   = parsed.urgency
@@ -279,14 +279,14 @@ async def _enrich_with_groq(report: Report) -> None:
             report.groq_condition        = parsed.condition
 
         logger.debug(
-            "groq_enrichment_done",
+            "ai_enrichment_done",
             report_id=report.id,
             hazard=parsed.hazard_type,
             urgency=parsed.urgency,
         )
     except Exception as exc:
-        # Never let Groq failure break the ingestion pipeline
-        logger.warning("groq_enrichment_failed", report_id=report.id, error=str(exc))
+        # Never let AI failure break the ingestion pipeline
+        logger.warning("ai_enrichment_failed", report_id=report.id, error=str(exc))
 
 
 async def _upsert_zone(report: Report, db: AsyncSession) -> Zone:

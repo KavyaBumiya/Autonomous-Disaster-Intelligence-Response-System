@@ -46,7 +46,7 @@ class Evidence(Base):
 
     payload holds the full normalized observation (JSONB); confidence is
     promoted for indexing/filtering. Written by the evidence fusion
-    service — Groq never computes final trust (§11)."""
+    service — the AI layer never computes final trust (§11)."""
 
     __tablename__ = "evidence"
 

@@ -14,7 +14,7 @@ export interface SystemHealth {
   api: ServiceStatus;
   database: ServiceStatus;
   auth: ServiceStatus;
-  groq: ServiceStatus;
+  ai: ServiceStatus;
   predictions: ServiceStatus;
   maps: ServiceStatus;
   realtime: ServiceStatus;
@@ -24,7 +24,7 @@ export interface SystemHealth {
   seismic: ServiceStatus;
   overall: ServiceStatus;
   reasons: string[];
-  groqModel?: string | null;
+  aiModel?: string | null;
   lastChecked?: string;
   checking: boolean;
 }
@@ -33,7 +33,7 @@ export type ServiceKey =
   | "api"
   | "database"
   | "auth"
-  | "groq"
+  | "ai"
   | "predictions"
   | "maps"
   | "realtime"
@@ -44,7 +44,7 @@ export const SERVICE_LABELS: Record<ServiceKey, string> = {
   api: "Backend API",
   database: "Database",
   auth: "Authentication",
-  groq: "Groq AI",
+  ai: "NVIDIA AI",
   predictions: "Predictions",
   maps: "Mapbox",
   realtime: "Realtime",
@@ -54,7 +54,7 @@ export const SERVICE_LABELS: Record<ServiceKey, string> = {
 
 /** Optional / intelligence services — failure degrades, never hard-offlines core. */
 const OPTIONAL_SERVICES: ServiceKey[] = [
-  "groq",
+  "ai",
   "predictions",
   "maps",
   "realtime",
@@ -67,7 +67,7 @@ export function createInitialHealth(): SystemHealth {
     api: "UNKNOWN",
     database: "UNKNOWN",
     auth: "UNKNOWN",
-    groq: "UNKNOWN",
+    ai: "UNKNOWN",
     predictions: "UNKNOWN",
     maps: "UNKNOWN",
     realtime: "UNKNOWN",
@@ -93,7 +93,7 @@ export function calculateOverallHealth(
     | "api"
     | "database"
     | "auth"
-    | "groq"
+    | "ai"
     | "predictions"
     | "maps"
     | "realtime"
@@ -106,7 +106,7 @@ export function calculateOverallHealth(
 
   if (health.api === "OFFLINE") return "OFFLINE";
 
-  if (health.api === "UNKNOWN" || health.groq === "UNKNOWN") return "UNKNOWN";
+  if (health.api === "UNKNOWN" || health.ai === "UNKNOWN") return "UNKNOWN";
 
   for (const key of OPTIONAL_SERVICES) {
     const s = health[key];
@@ -131,7 +131,7 @@ export function getHealthReasons(
     | "api"
     | "database"
     | "auth"
-    | "groq"
+    | "ai"
     | "predictions"
     | "maps"
     | "realtime"
@@ -151,8 +151,8 @@ export function getHealthReasons(
     return reasons;
   }
 
-  if (health.groq === "OFFLINE" || health.groq === "DEGRADED") {
-    reasons.push("Groq AI unavailable. Core operational services remain online.");
+  if (health.ai === "OFFLINE" || health.ai === "DEGRADED") {
+    reasons.push("NVIDIA AI unavailable. Core operational services remain online.");
   }
   if (health.predictions === "OFFLINE" || health.predictions === "DEGRADED") {
     reasons.push("Prediction service unavailable.");

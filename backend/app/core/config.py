@@ -2,7 +2,7 @@
 AEGIS-AI — Central configuration
 ==================================
 All settings are loaded from environment variables (server-side .env).
-The GROQ_API_KEY is loaded here and never serialised into any HTTP response.
+The NVIDIA_API_KEY is loaded here and never serialised into any HTTP response.
 """
 from functools import lru_cache
 from pathlib import Path
@@ -72,23 +72,18 @@ class Settings(BaseSettings):
     jwt_algorithm:      str = "HS256"
     jwt_expire_minutes: int = 60
 
-    # ── Groq AI Gateway ───────────────────────────────────────────────────
-    # SECURITY: This key is read server-side only. It is NEVER sent to the
+    # ── NVIDIA NIM AI Gateway ────────────────────────────────────────────
+    # OpenAI-compatible endpoint (https://integrate.api.nvidia.com/v1).
+    # SECURITY: this key is read server-side only. It is NEVER sent to the
     # browser or included in any HTTP response body.
-    groq_api_key: str = ""
-    # Models confirmed available on this key (checked via client.models.list()):
-    #   qwen/qwen3.8-27b             — primary chat / parse / summarise / explain
-    #   openai/gpt-oss-20b/120b      — listed but return EMPTY completions (do not use)
-    #   whisper-large-v3-turbo       — cloud speech-to-text
-    #   allam-2-7b                   — Arabic translate / multilingual normalise
-    #   meta-llama/llama-prompt-guard-2-86m — moderation reference model
-    # DO NOT use llama-3.x or mixtral — not available on this key's tier.
-    groq_model:            str = "qwen/qwen3.8-27b"
-    # Empty = no alternate (recommended until another model is verified).
-    groq_fallback_model:   str = ""
-    groq_stt_model:        str = "whisper-large-v3-turbo"
-    groq_translate_model:  str = "allam-2-7b"
-    groq_moderation_model: str = "meta-llama/llama-prompt-guard-2-86m"
+    nvidia_api_key: str = ""
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_model: str = "deepseek-ai/deepseek-v4.1-flash"
+    # Empty = no alternate (recommended until another NIM model is verified).
+    nvidia_fallback_model: str = ""
+    nvidia_timeout_seconds: float = 60.0
+    # Safety cap on the agentic tool-calling loop (rounds of tool execution).
+    nvidia_max_tool_rounds: int = 5
 
     # ── External data APIs (PRD §35 — connector base URLs) ──────────────
     # Defaults match the previously hard-coded values, so adding these
@@ -151,8 +146,10 @@ class Settings(BaseSettings):
     social_provider:              str = "twitter"   # "twitter" | "mastodon"
 
     # ── Speech-to-text ───────────────────────────────────────────────────
-    # "groq" = cloud Whisper on Groq (preferred); "local" = openai-whisper.
-    stt_provider:                str = "groq"
+    # The NVIDIA NIM chat-completions endpoint has no speech-to-text model, so
+    # transcription runs locally via openai-whisper. Set STT_PROVIDER=disabled
+    # to reject voice reports outright instead of loading the local model.
+    stt_provider:                str = "local"
     whisper_model:                  str = "base"
     whisper_max_duration_seconds:   int = 30
 
@@ -180,8 +177,8 @@ class Settings(BaseSettings):
         return [h.strip() for h in self.social_hashtags.split(",")]
 
     @property
-    def groq_configured(self) -> bool:
-        return bool(self.groq_api_key)
+    def nvidia_configured(self) -> bool:
+        return bool(self.nvidia_api_key)
 
 
 @lru_cache

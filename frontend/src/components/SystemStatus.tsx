@@ -14,9 +14,9 @@ interface SystemStatusProps {
   wsConnected?: boolean;
   /** Prefer compact badge (still clickable for details) */
   compact?: boolean;
-  /** @deprecated retained for call-site compatibility — Groq is tracked in the store */
-  groqOnline?: boolean;
-  groqModel?: string | null;
+  /** @deprecated retained for call-site compatibility — NVIDIA is tracked in the store */
+  aiOnline?: boolean;
+  aiModel?: string | null;
 }
 
 export type SystemMode = "FULL_DATA" | "DEGRADED" | "OFFLINE";
@@ -55,7 +55,7 @@ export const SystemStatus: React.FC<SystemStatusProps> = ({
             api: health.api,
             database: health.database,
             auth: health.auth,
-            groq: health.groq,
+            ai: health.ai,
             predictions: health.predictions,
             maps: health.maps,
             realtime: health.realtime,
@@ -63,7 +63,7 @@ export const SystemStatus: React.FC<SystemStatusProps> = ({
             seismic: health.seismic,
             overall: health.overall,
             reasons: health.reasons,
-            groqModel: health.groqModel,
+            aiModel: health.aiModel,
             lastChecked: health.lastChecked,
             checking: health.checking,
           }}

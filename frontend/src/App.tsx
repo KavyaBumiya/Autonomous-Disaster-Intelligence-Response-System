@@ -5,6 +5,9 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 const DashboardLayout = lazy(() =>
   import("./pages/DashboardLayout").then((m) => ({ default: m.DashboardLayout }))
 );
+const RegionalMapPage = lazy(() =>
+  import("./pages/RegionalMapPage").then((m) => ({ default: m.RegionalMapPage }))
+);
 const CommandCenter = lazy(() =>
   import("./pages/CommandCenter").then((m) => ({ default: m.CommandCenter }))
 );
@@ -41,7 +44,8 @@ export const App: React.FC = () => {
     <ErrorBoundary>
       <Suspense fallback={<RouteFallback />}>
         <Routes>
-          <Route path="/" element={<DashboardLayout />} />
+          <Route path="/" element={<RegionalMapPage />} />
+          <Route path="/map" element={<RegionalMapPage />} />
           <Route path="/dashboard" element={<DashboardLayout />} />
           <Route path="/dashboard/:zoneId" element={<DashboardLayout />} />
 

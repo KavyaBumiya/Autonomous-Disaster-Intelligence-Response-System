@@ -1,18 +1,18 @@
 """
 AEGIS-AI — Command Center API
 ==============================
-Replaces the Ollama-based endpoint with the Groq AI Gateway.
+Replaces the Ollama-based endpoint with the NVIDIA NIM AI Gateway.
 
 Architecture (PRD §4, §9):
   Commander query
-    → Groq Gateway (language understanding, tool orchestration, explanation)
+    → AI Gateway (NVIDIA NIM — language understanding, tool orchestration, explanation)
     → ToolExecutor (actual DB reads / engine calls — never the LLM directly)
     → Deterministic Decision Engine  (priority numbers — never the LLM)
     → Human Approval Gate            (for safety-critical actions)
     → Response with XAI evidence
 
 SECURITY:
-  • GROQ_API_KEY lives only in the backend process (.env → settings).
+  • NVIDIA_API_KEY lives only in the backend process (.env → settings).
   • The key is never serialised into any HTTP response.
   • The frontend receives only the natural-language response and structured data.
 
@@ -23,6 +23,7 @@ HUMAN APPROVAL GATE (PRD §9):
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 import structlog
@@ -37,12 +38,30 @@ from app.core.database import get_db
 from app.models.incident import Incident
 from app.models.resource import Resource
 from app.models.zone import Zone
-from app.services.groq_gateway import groq_gateway, ToolExecutor, CommandQueryResponse
+from app.services.ai_gateway import ai_gateway, ToolExecutor, CommandQueryResponse
 
 logger   = structlog.get_logger()
 settings = get_settings()
 
 router = APIRouter(prefix="/api/command", tags=["command center"])
+
+
+# The UI polls this endpoint, so the live NIM probe is cached briefly to avoid
+# spending a completion call (and a rate-limit slot) on every poll.
+_PROBE_TTL_SECONDS = 60.0
+_probe_cache: dict = {"at": 0.0, "result": {}}
+
+
+async def _nvidia_probe_cached() -> dict:
+    now = time.monotonic()
+    if now - _probe_cache["at"] < _PROBE_TTL_SECONDS:
+        return _probe_cache["result"]
+    try:
+        result = await ai_gateway._get_connector().health()
+    except Exception as exc:  # never let a probe break the health endpoint
+        result = {"provider": "nvidia", "status": "OFFLINE", "reason": type(exc).__name__}
+    _probe_cache.update({"at": now, "result": result})
+    return result
 
 
 # ─── Request / Response models ───────────────────────────────────────────
@@ -67,8 +86,8 @@ class CommandResponseModel(BaseModel):
     execution_results: list[dict]             = []
     execution_time:    float                  = 0.0
     model_used:        str                    = ""
-    groq_available:    bool                   = False
-    groq_call_id:      str                    = ""
+    ai_available:      bool                   = False
+    ai_call_id:        str                    = ""
     conversation_id:   str | None             = None
 
 
@@ -77,18 +96,32 @@ class CommandResponseModel(BaseModel):
 @router.get("/health")
 async def command_health():
     """
-    Check whether the Groq AI Gateway is configured and reachable.
-    Returns groq_available=true when GROQ_API_KEY is set.
+    Check whether the AI Gateway is configured AND actually authenticating.
+
+    A configured key is not proof of a working one, so this runs a real probe
+    against NIM (cached briefly) rather than just checking that the key exists.
     The key itself is never exposed.
     """
-    available = groq_gateway.available
+    configured = ai_gateway.available
+    probe: dict = {}
+    if configured:
+        probe = await _nvidia_probe_cached()
+
+    online = bool(probe.get("status") == "ONLINE")
+    if not configured:
+        note = "NVIDIA_API_KEY not set — using offline fallback"
+    elif online:
+        note = "NVIDIA NIM AI Gateway ready"
+    else:
+        reason = probe.get("reason") or "probe failed"
+        note = f"NVIDIA NIM unreachable ({reason}) — using offline fallback"
+
     return {
-        "groq_available": available,
-        "model":          settings.groq_model if available else None,
-        "note":           (
-            "Groq AI Gateway ready" if available
-            else "GROQ_API_KEY not set — using offline fallback"
-        ),
+        "ai_available": online,
+        "ai_configured": configured,
+        "model":        settings.nvidia_model if online else None,
+        "provider":     "nvidia-nim",
+        "note":         note,
     }
 
 
@@ -101,7 +134,7 @@ async def command_query(
     current_user: dict    = Depends(require_role(["commander", "responder", "analyst"])),
 ):
     """
-    Process a natural-language commander query via the Groq AI Gateway.
+    Process a natural-language commander query via the AI Gateway.
 
     The LLM:
       ✓ understands the query
@@ -128,7 +161,7 @@ async def command_query(
         conversation_history = await load_history(request.conversation_id)
 
     try:
-        result: CommandQueryResponse = await groq_gateway.command_query(
+        result: CommandQueryResponse = await ai_gateway.command_query(
             user_query=query,
             tool_executor=executor,
             model_override=request.model_name,
@@ -160,7 +193,7 @@ async def command_query(
         user_id=current_user.get("user_id"),
         role=current_user.get("role"),
         tools_called=[fc.get("name") for fc in result.function_calls],
-        groq_available=groq_gateway.available,
+        ai_available=ai_gateway.available,
         conversation_id=request.conversation_id,
         history_turns=len(conversation_history),
         elapsed_s=round(elapsed, 2),
@@ -175,8 +208,8 @@ async def command_query(
         execution_results=result.execution_results,
         execution_time=result.execution_time or elapsed,
         model_used=result.model_used,
-        groq_available=groq_gateway.available,
-        groq_call_id=result.groq_call_id,
+        ai_available=ai_gateway.available,
+        ai_call_id=result.ai_call_id,
         conversation_id=request.conversation_id,
     )
 
@@ -210,14 +243,15 @@ async def explain_incident(
 ):
     """
     Generate a plain-English explanation of an incident's priority and evidence.
-    Groq explains the output of the deterministic engine — it does not produce the score.
+    The AI layer explains the output of the deterministic engine — it does not
+    produce the score.
     """
     result = await db.execute(select(Incident).where(Incident.id == incident_id))
     incident = result.scalar_one_or_none()
     if not incident:
         raise HTTPException(404, detail="Incident not found")
 
-    explanation = await groq_gateway.explain_xai(
+    explanation = await ai_gateway.explain_xai(
         xai_reasoning=incident.xai_reasoning or "",
         incident_id=incident_id,
     )
@@ -238,7 +272,7 @@ async def explain_incident(
         "priority_band":  _band_label(incident.priority_score),
         "explanation":    explanation,
         "xai_raw":        incident.xai_reasoning,
-        "groq_used":      groq_gateway.available,
+        "ai_used":        ai_gateway.available,
         "evidence_attribution": attribution,
     }
 
@@ -271,7 +305,7 @@ async def summarise_incident(
         "created_at":    incident.created_at.isoformat() if incident.created_at else None,
     }
 
-    summary = await groq_gateway.summarise_incident(evidence)
+    summary = await ai_gateway.summarise_incident(evidence)
 
     # Persist for dashboard panels (PRD §8)
     if summary:
@@ -282,7 +316,7 @@ async def summarise_incident(
         "incident_id": incident_id,
         "summary":     summary,
         "evidence":    evidence,
-        "groq_used":   groq_gateway.available,
+        "ai_used":     ai_gateway.available,
     }
 
 
@@ -461,7 +495,7 @@ async def approval_queue(
     Return all actions pending human approval.
     Commanders review these before any dispatch is authorised.
     PRD §9: The LLM cannot approve these — only a human commander can.
-    Missing Groq narratives are generated (wording only — engine evidence
+    Missing AI narratives are generated (wording only — engine evidence
     is the source of truth) so the approval brief is self-contained.
     """
     from app.models.action import Action

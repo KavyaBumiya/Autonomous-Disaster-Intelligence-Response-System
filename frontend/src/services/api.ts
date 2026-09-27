@@ -8,8 +8,8 @@
  * and performs no auth bootstrap before first paint.
  *
  * SECURITY NOTE (PRD §3 / §23):
- *   - The GROQ_API_KEY lives only on the backend server.
- *   - The frontend never receives or stores the Groq key.
+ *   - The NVIDIA_API_KEY lives only on the backend server.
+ *   - The frontend never receives or stores the NVIDIA NIM key.
  *   - All LLM calls go through POST /api/command/query on the backend.
  *
  * Transport:
@@ -53,6 +53,13 @@ export interface Incident {
   priority_band?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | null;
   confidence: number;
   xai_reasoning: string | null;
+  /**
+   * Legacy field names. These are the actual wire contract from
+   * GET /api/incidents: the backend still reads/writes the pre-migration
+   * `Incident.groq_summary` / `Incident.groq_explanation` database columns.
+   * Only the JSON keys are stale; the content is now NVIDIA NIM output.
+   * A follow-up DB migration will rename the columns and these fields.
+   */
   groq_summary: string | null;
   groq_explanation: string | null;
   status: string;
@@ -119,14 +126,18 @@ export interface CommandResponse {
   execution_results: Record<string, unknown>[];
   execution_time: number;
   model_used: string;
-  groq_available: boolean;
-  groq_call_id: string;
+  ai_available: boolean;
+  ai_call_id: string;
   conversation_id?: string | null;
 }
 
-export interface GroqHealthResponse {
-  groq_available: boolean;
+export interface AIHealthResponse {
+  /** True only when a live NIM probe succeeded, not merely when a key exists. */
+  ai_available: boolean;
+  /** A key is present in the server env, even if it fails to authenticate. */
+  ai_configured: boolean;
   model: string | null;
+  provider: string;
   note: string;
 }
 
@@ -232,7 +243,7 @@ export interface ExplainResponse {
   priority_band: string;
   explanation: string;
   xai_raw: string;
-  groq_used: boolean;
+  ai_used: boolean;
   evidence_attribution: EvidenceAttribution[];
 }
 
@@ -373,11 +384,11 @@ export const heatmapsApi = {
 };
 
 // ── Command Center APIs ───────────────────────────────────────────────────
-// The key to remember: none of these endpoints expose GROQ_API_KEY.
+// The key to remember: none of these endpoints expose NVIDIA_API_KEY.
 // All LLM work happens inside the backend.
 
 export const commandApi = {
-  health: () => api.get<GroqHealthResponse>("/api/command/health"),
+  health: () => api.get<AIHealthResponse>("/api/command/health"),
 
   query: (data: {
     user_query: string;
@@ -395,7 +406,7 @@ export const commandApi = {
       incident_id: string;
       summary: string;
       evidence: Record<string, unknown>;
-      groq_used: boolean;
+      ai_used: boolean;
     }>(`/api/command/summarise/${incident_id}`),
 
   listAvailableResources: () =>

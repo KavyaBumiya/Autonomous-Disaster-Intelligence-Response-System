@@ -27,8 +27,8 @@ def test_api_root_metadata(client: TestClient):
     assert body["docs"] == "/docs"
     assert body["health"] == "/api/health"
     # Must not leak secrets
-    assert "gsk_" not in r.text
-    assert "GROQ_API_KEY" not in body
+    assert "nvapi-" not in r.text
+    assert "NVIDIA_API_KEY" not in body
 
 
 def test_api_health(client: TestClient):
@@ -140,8 +140,8 @@ def test_command_health_public(client: TestClient):
     r = client.get("/api/command/health")
     assert r.status_code == 200
     body = r.json()
-    assert "groq_available" in body
-    assert "gsk_" not in r.text
+    assert "ai_available" in body
+    assert "nvapi-" not in r.text
 
 
 def test_approval_queue_public(client: TestClient):

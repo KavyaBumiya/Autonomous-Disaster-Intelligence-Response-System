@@ -2,7 +2,7 @@
  * AEGIS-AI — Human Approval Gate
  * ================================
  * PRD §9: All safety-critical actions require explicit commander approval.
- * The AI (Groq) cannot approve, reject, or bypass this component.
+ * The AI (NVIDIA) cannot approve, reject, or bypass this component.
  *
  * Displays pending actions with full XAI evidence so the commander
  * can make an informed decision before any dispatch occurs.
@@ -103,7 +103,7 @@ export const ApprovalQueue: React.FC<ApprovalQueueProps> = ({
       <div className="mb-5 flex items-start gap-3 rounded-xl border border-[#38d9c4]/20 bg-[#38d9c4]/5 px-4 py-3 text-xs leading-5 text-[#38d9c4]">
         <span className="text-base">🛡️</span>
         <span>
-          <strong>Safety constraint:</strong> The AI (Groq) cannot approve, reject, or bypass
+          <strong>Safety constraint:</strong> The AI (NVIDIA) cannot approve, reject, or bypass
           this queue. Every approval creates an immutable audit record with your user ID,
           role, and timestamp.
         </span>
@@ -243,10 +243,10 @@ const ActionCard: React.FC<ActionCardProps> = ({
                 </div>
               )}
 
-              {/* Groq explanation */}
+              {/* NVIDIA explanation */}
               {incident.groq_explanation && (
                 <div>
-                  <div className="ops-kicker mb-2">AI Explanation (Groq)</div>
+                  <div className="ops-kicker mb-2">AI Explanation (NVIDIA)</div>
                   <p className="rounded-lg border border-[#38d9c4]/20 bg-[#38d9c4]/5 p-3 text-sm leading-6 text-slate-200">
                     {incident.groq_explanation}
                   </p>

@@ -13,7 +13,7 @@ const allOnline = {
   api: "ONLINE" as const,
   database: "ONLINE" as const,
   auth: "ONLINE" as const,
-  groq: "ONLINE" as const,
+  ai: "ONLINE" as const,
   predictions: "ONLINE" as const,
   maps: "ONLINE" as const,
   realtime: "ONLINE" as const,
@@ -23,20 +23,20 @@ const allOnline = {
 };
 
 describe("calculateOverallHealth", () => {
-  it("TEST 1: API healthy + Groq healthy → ONLINE", () => {
+  it("TEST 1: API healthy + NVIDIA healthy → ONLINE", () => {
     expect(calculateOverallHealth(allOnline)).toBe("ONLINE");
   });
 
-  it("TEST 2: API healthy + Groq unavailable → DEGRADED", () => {
+  it("TEST 2: API healthy + NVIDIA unavailable → DEGRADED", () => {
     expect(
-      calculateOverallHealth({ ...allOnline, groq: "OFFLINE" }),
+      calculateOverallHealth({ ...allOnline, ai: "OFFLINE" }),
     ).toBe("DEGRADED");
     expect(
-      calculateOverallHealth({ ...allOnline, groq: "DEGRADED" }),
+      calculateOverallHealth({ ...allOnline, ai: "DEGRADED" }),
     ).toBe("DEGRADED");
   });
 
-  it("TEST 3: API unavailable + Groq healthy → OFFLINE", () => {
+  it("TEST 3: API unavailable + NVIDIA healthy → OFFLINE", () => {
     expect(
       calculateOverallHealth({ ...allOnline, api: "OFFLINE" }),
     ).toBe("OFFLINE");
@@ -60,11 +60,11 @@ describe("calculateOverallHealth", () => {
     expect(
       calculateOverallHealth({ ...allOnline, checking: true }),
     ).toBe("UNKNOWN");
-    // Groq still unknown after checks → incomplete, not DEGRADED
+    // NVIDIA still unknown after checks → incomplete, not DEGRADED
     expect(
       calculateOverallHealth({
         ...allOnline,
-        groq: "UNKNOWN",
+        ai: "UNKNOWN",
         checking: false,
       }),
     ).toBe("UNKNOWN");
@@ -86,12 +86,12 @@ describe("calculateOverallHealth", () => {
     );
   });
 
-  it("TEST 8: command/health unavailable → Groq offline, API independent → DEGRADED", () => {
+  it("TEST 8: command/health unavailable → NVIDIA offline, API independent → DEGRADED", () => {
     expect(
       calculateOverallHealth({
         ...allOnline,
         api: "ONLINE",
-        groq: "OFFLINE",
+        ai: "OFFLINE",
       }),
     ).toBe("DEGRADED");
   });
@@ -100,7 +100,7 @@ describe("calculateOverallHealth", () => {
     expect(
       calculateOverallHealth({
         ...allOnline,
-        groq: "OFFLINE",
+        ai: "OFFLINE",
         checking: true,
       }),
     ).toBe("UNKNOWN");
@@ -150,13 +150,13 @@ describe("calculateOverallHealth", () => {
 });
 
 describe("getHealthReasons", () => {
-  it("includes Groq reason when degraded but API online", () => {
+  it("includes NVIDIA reason when degraded but API online", () => {
     const reasons = getHealthReasons({
       ...allOnline,
-      groq: "OFFLINE",
+      ai: "OFFLINE",
       overall: "DEGRADED",
     });
-    expect(reasons.join(" ")).toMatch(/Groq AI unavailable/i);
+    expect(reasons.join(" ")).toMatch(/NVIDIA AI unavailable/i);
     expect(reasons.join(" ")).toMatch(/remain online/i);
   });
 

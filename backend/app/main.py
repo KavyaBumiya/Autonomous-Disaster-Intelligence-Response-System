@@ -339,7 +339,7 @@ async def health():
 
     raw = registry.snapshot()
     # Raw provider names kept (frontend reads open-meteo/usgs) plus canonical
-    # group aliases {weather, seismic, gis, routing, geocoding, groq} (§31).
+    # group aliases {weather, seismic, gis, routing, geocoding, ai} (§31).
     providers: dict = dict(raw)
     for group, status in registry.canonical_statuses(raw).items():
         providers[group] = {"status": status, "canonical": True}

@@ -1,67 +1,225 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Cesium from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
-import { useQuery } from "@tanstack/react-query";
-import api from "@/services/api";
+import {
+  EMPTY_LAYERS,
+  LAYER_ORDER,
+  type GlobeZone,
+  type LayerKey,
+  type MapLayers,
+} from "./mapLayers";
 
-Cesium.Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_ION_TOKEN || "";
+const ION_TOKEN = (import.meta.env.VITE_CESIUM_ION_TOKEN || "").trim();
+if (ION_TOKEN) Cesium.Ion.defaultAccessToken = ION_TOKEN;
+
+/** Token-free base imagery so the globe still renders without a valid ion token. */
+function fallbackBaseLayer(): Cesium.ImageryLayer {
+  return Cesium.ImageryLayer.fromProviderAsync(
+    Promise.resolve(
+      new Cesium.OpenStreetMapImageryProvider({
+        credit: new Cesium.Credit(
+          '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors',
+        ),
+      }),
+    ),
+  );
+}
+
+/**
+ * ion assets (satellite imagery, world terrain) 401 on an expired/revoked
+ * token. Cesium then tries to decode the JSON error body as an image and the
+ * render loop dies, so the token is probed before any ion asset is used.
+ */
+async function ionTokenUsable(signal: AbortSignal): Promise<boolean> {
+  try {
+    const res = await fetch("https://api.cesium.com/v1/me", {
+      headers: { Authorization: `Bearer ${ION_TOKEN}` },
+      signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+
 
 interface CesiumGlobeProps {
-  zones?: Array<{
-    zone_id: string;
-    name: string;
-    centroid_lat: number;
-    centroid_lng: number;
-    priority_score: number;
-    victim_count: number;
-  }>;
+  /** @deprecated pass `layers.zones`; kept for the existing single-page call sites */
+  zones?: GlobeZone[];
+  layers?: Partial<MapLayers>;
+  visible?: Partial<Record<LayerKey, boolean>>;
   onSelectZone?: (zoneId: string) => void;
+  onSelectIncident?: (incidentId: string) => void;
+  onSelectResource?: (resourceId: string) => void;
   height?: string;
+  /** "bounds" frames every loaded zone — used by the full-screen regional view */
+  autoFit?: "first" | "bounds";
+  /** Fly to this coordinate whenever the value changes */
+  focus?: { lat: number; lng: number; height?: number } | null;
+  /** Increment to re-run the auto-fit (used by the "reset view" control) */
+  resetToken?: number;
+  showControls?: boolean;
+}
+
+const DISASTER_COLORS: Record<string, string> = {
+  flood: "#38bdf8",
+  earthquake: "#f59e0b",
+  fire: "#ef4444",
+  wildfire: "#ef4444",
+  landslide: "#a78bfa",
+  storm: "#22d3ee",
+  cyclone: "#22d3ee",
+  tsunami: "#6366f1",
+  drought: "#eab308",
+};
+
+function disasterColor(type?: string | null): Cesium.Color {
+  if (type && DISASTER_COLORS[type.toLowerCase()]) {
+    return Cesium.Color.fromCssColorString(DISASTER_COLORS[type.toLowerCase()])!;
+  }
+  return Cesium.Color.ORANGE;
+}
+
+function priorityColor(priority: number): Cesium.Color {
+  if (priority >= 70) return Cesium.Color.RED;
+  if (priority >= 40) return Cesium.Color.ORANGE;
+  return Cesium.Color.CYAN;
 }
 
 export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
-  zones = [],
+  zones,
+  layers,
+  visible,
   onSelectZone,
+  onSelectIncident,
+  onSelectResource,
   height = "clamp(400px, 60vh, 700px)",
+  autoFit = "first",
+  focus = null,
+  resetToken = 0,
+  showControls = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
+  const sourcesRef = useRef<Partial<Record<LayerKey, Cesium.CustomDataSource>>>({});
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
+  const data = useMemo<MapLayers>(
+    () => ({
+      ...EMPTY_LAYERS,
+      ...layers,
+      zones: layers?.zones ?? zones ?? [],
+    }),
+    [layers, zones],
+  );
+
+  const zoneIndex = useMemo(() => {
+    const map = new Map<string, GlobeZone>();
+    data.zones.forEach((z) => map.set(z.zone_id, z));
+    return map;
+  }, [data.zones]);
+
+  const zoneIdList = useMemo(
+    () => JSON.stringify(data.zones.map((z) => z.zone_id).sort()),
+    [data.zones],
+  );
+
   useEffect(() => {
-    if (!containerRef.current || viewerRef.current) return;
-    if (!Cesium.Ion.defaultAccessToken) {
-      setError("Cesium Ion token not configured");
-      return;
-    }
+    const container = containerRef.current;
+    if (!container || viewerRef.current) return;
 
-    let viewer: Cesium.Viewer;
-    try {
-      viewer = new Cesium.Viewer(containerRef.current, {
-        terrain: Cesium.Terrain.fromWorldTerrain(),
-        baseLayerPicker: false,
-        geocoder: false,
-        homeButton: false,
-        sceneModePicker: false,
-        navigationHelpButton: false,
-        animation: false,
-        timeline: false,
-        fullscreenButton: false,
-        selectionIndicator: false,
-        infoBox: false,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Cesium init failed");
-      return;
-    }
+    let disposed = false;
+    const controller = new AbortController();
+    let viewer: Cesium.Viewer | null = null;
 
-    viewerRef.current = viewer;
-    setReady(true);
+    const init = async () => {
+      try {
+        viewer = new Cesium.Viewer(container, {
+          baseLayer: fallbackBaseLayer(),
+          terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+          baseLayerPicker: false,
+          geocoder: false,
+          homeButton: false,
+          sceneModePicker: false,
+          navigationHelpButton: false,
+          animation: false,
+          timeline: false,
+          fullscreenButton: false,
+          selectionIndicator: false,
+          infoBox: false,
+        });
+      } catch (err) {
+        if (!disposed) {
+          setError(err instanceof Error ? err.message : "Cesium init failed");
+        }
+        return;
+      }
+
+      const globe = viewer;
+      // A single bad tile or an unreachable provider must not stop the render
+      // loop; Cesium rethrows render errors by default.
+      globe.scene.rethrowRenderErrors = false;
+      globe.scene.renderError.addEventListener(
+        (_scene: Cesium.Scene, err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn("[CesiumGlobe] render error (non-fatal):", message);
+        },
+      );
+
+      viewerRef.current = globe;
+      if (disposed) {
+        globe.destroy();
+        return;
+      }
+      setReady(true);
+
+      if (!ION_TOKEN) {
+        setNotice(
+          "No VITE_CESIUM_ION_TOKEN — showing OpenStreetMap imagery and ellipsoid terrain.",
+        );
+        return;
+      }
+
+      const usable = await ionTokenUsable(controller.signal);
+      if (disposed || !viewerRef.current) return;
+
+      if (!usable) {
+        setNotice(
+          "Cesium Ion token rejected (401) — showing OpenStreetMap imagery and ellipsoid terrain.",
+        );
+        return;
+      }
+
+      try {
+        // ion asset 1 is TERRAIN (Cesium World Terrain); base imagery is
+        // resolved by createWorldImageryAsync (Bing Maps Aerial, asset 2).
+        globe.imageryLayers.addImageryProvider(
+          await Cesium.createWorldImageryAsync(),
+        );
+        globe.terrainProvider = await Cesium.createWorldTerrainAsync({
+          requestVertexNormals: true,
+          requestWaterMask: true,
+        });
+      } catch (err) {
+        console.warn(
+          "[CesiumGlobe] ion upgrade failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+        setNotice("Cesium Ion assets unavailable — using OpenStreetMap base imagery.");
+      }
+    };
+
+    void init();
 
     return () => {
-      viewer.destroy();
+      disposed = true;
+      controller.abort();
       viewerRef.current = null;
+      sourcesRef.current = {};
+      if (viewer && !viewer.isDestroyed()) viewer.destroy();
       setReady(false);
     };
   }, []);
@@ -70,46 +228,219 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
     const viewer = viewerRef.current;
     if (!viewer || !ready) return;
 
-    viewer.entities.removeAll();
+    const replace = (key: LayerKey, build: (ds: Cesium.CustomDataSource) => void) => {
+      const existing = sourcesRef.current[key];
+      if (existing) {
+        if (!viewer.isDestroyed()) viewer.dataSources.remove(existing, false);
+        delete sourcesRef.current[key];
+      }
+      const ds = new Cesium.CustomDataSource(key);
+      build(ds);
+      viewer.dataSources.add(ds);
+      sourcesRef.current[key] = ds;
+    };
 
-    zones.forEach((zone) => {
-      if (!Number.isFinite(zone.centroid_lat) || !Number.isFinite(zone.centroid_lng)) return;
-      const priority = zone.priority_score ?? 0;
-      const color =
-        priority >= 70
-          ? Cesium.Color.RED.withAlpha(0.8)
-          : priority >= 40
-            ? Cesium.Color.ORANGE.withAlpha(0.8)
-            : Cesium.Color.CYAN.withAlpha(0.8);
+    replace("zones", (ds) => {
+      data.zones.forEach((zone) => {
+        if (!Number.isFinite(zone.centroid_lat) || !Number.isFinite(zone.centroid_lng)) return;
+        const priority = zone.priority_score ?? 0;
+        const color = priorityColor(priority);
+        const radius = Math.max(200, zone.radius_meters ?? 800);
 
-      viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(zone.centroid_lng, zone.centroid_lat),
-        point: {
-          pixelSize: Math.max(8, Math.min(24, priority / 4 + 8)),
-          color,
-          outlineColor: Cesium.Color.WHITE,
-          outlineWidth: 2,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        },
-        label: {
-          text: zone.name || "Zone",
-          font: "12px sans-serif",
-          fillColor: Cesium.Color.WHITE,
-          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-          outlineWidth: 2,
-          outlineColor: Cesium.Color.BLACK,
-          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-          pixelOffset: new Cesium.Cartesian2(0, -20),
-          show: priority >= 40,
-        },
-        properties: {
-          zone_id: zone.zone_id,
-        },
+        ds.entities.add({
+          id: `zone-${zone.zone_id}`,
+          position: Cesium.Cartesian3.fromDegrees(zone.centroid_lng, zone.centroid_lat),
+          point: {
+            pixelSize: Math.max(8, Math.min(24, priority / 4 + 8)),
+            color,
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 2,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          ellipse: {
+            semiMajorAxis: radius,
+            semiMinorAxis: radius,
+            material: color.withAlpha(0.18),
+            outline: true,
+            outlineColor: color.withAlpha(0.85),
+            height: 0,
+          },
+          label: {
+            text: zone.name || "Zone",
+            font: "12px sans-serif",
+            fillColor: Cesium.Color.WHITE,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            outlineWidth: 2,
+            outlineColor: Cesium.Color.BLACK,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            pixelOffset: new Cesium.Cartesian2(0, -20),
+            show: priority >= 40,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          properties: { kind: "zone", id: zone.zone_id },
+        });
       });
     });
 
-    if (zones.length > 0) {
-      const first = zones[0];
+    replace("incidents", (ds) => {
+      data.incidents.forEach((incident) => {
+        const zone = incident.zone_id ? zoneIndex.get(incident.zone_id) : undefined;
+        const lat = incident.lat ?? zone?.centroid_lat;
+        const lng = incident.lng ?? zone?.centroid_lng;
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        const priority = incident.priority_score ?? 0;
+        const color = disasterColor(incident.disaster_type);
+
+        ds.entities.add({
+          id: `incident-${incident.incident_id}`,
+          position: Cesium.Cartesian3.fromDegrees(Number(lng), Number(lat)),
+          point: {
+            pixelSize: Math.max(10, Math.min(28, priority / 3 + 10)),
+            color,
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 2,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          label: {
+            text: `${incident.disaster_type ?? "incident"} #${priority.toFixed(0)}`,
+            font: "11px sans-serif",
+            fillColor: Cesium.Color.WHITE,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            outlineWidth: 3,
+            outlineColor: Cesium.Color.BLACK,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            pixelOffset: new Cesium.Cartesian2(0, -24),
+            show: priority >= 60,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          properties: { kind: "incident", id: incident.incident_id },
+        });
+      });
+    });
+
+    replace("resources", (ds) => {
+      data.resources.forEach((resource) => {
+        if (!Number.isFinite(resource.lat) || !Number.isFinite(resource.lng)) return;
+        const free = resource.available !== false;
+        const color = free ? Cesium.Color.LIME : Cesium.Color.GRAY;
+
+        ds.entities.add({
+          id: `resource-${resource.resource_id}`,
+          position: Cesium.Cartesian3.fromDegrees(Number(resource.lng), Number(resource.lat)),
+          point: {
+            pixelSize: 9,
+            color,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 1,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          label: {
+            text: resource.name ?? resource.resource_type ?? "Resource",
+            font: "10px sans-serif",
+            fillColor: Cesium.Color.WHITE,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            outlineWidth: 3,
+            outlineColor: Cesium.Color.BLACK,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            pixelOffset: new Cesium.Cartesian2(0, -14),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          properties: { kind: "resource", id: resource.resource_id },
+        });
+      });
+    });
+
+    replace("earthquakes", (ds) => {
+      data.earthquakes.forEach((eq, idx) => {
+        if (!Number.isFinite(eq.lat) || !Number.isFinite(eq.lng)) return;
+        const mag = eq.magnitude ?? 0;
+        ds.entities.add({
+          id: `eq-${eq.usgs_id ?? eq.id ?? idx}`,
+          position: Cesium.Cartesian3.fromDegrees(eq.lng, eq.lat),
+          point: {
+            pixelSize: Math.max(6, Math.min(22, mag * 3)),
+            color: Cesium.Color.YELLOW,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 1,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          label: {
+            text: `M${mag.toFixed(1)}`,
+            font: "10px sans-serif",
+            fillColor: Cesium.Color.YELLOW,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            outlineWidth: 3,
+            outlineColor: Cesium.Color.BLACK,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            pixelOffset: new Cesium.Cartesian2(0, -12),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          properties: { kind: "earthquake", id: eq.usgs_id ?? eq.id ?? "" },
+        });
+      });
+    });
+
+    replace("fires", (ds) => {
+      data.fires.forEach((fire, idx) => {
+        if (!Number.isFinite(fire.latitude) || !Number.isFinite(fire.longitude)) return;
+        const frp = fire.frp ?? 0;
+        ds.entities.add({
+          id: `fire-${idx}`,
+          position: Cesium.Cartesian3.fromDegrees(fire.longitude, fire.latitude),
+          point: {
+            pixelSize: Math.max(4, Math.min(16, 4 + frp / 20)),
+            color: Cesium.Color.fromCssColorString("#ff3b30")!,
+            outlineColor: Cesium.Color.YELLOW,
+            outlineWidth: 1,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          properties: { kind: "fire", id: String(idx) },
+        });
+      });
+    });
+
+    replace("reports", (ds) => {
+      data.reports.forEach((report, idx) => {
+        if (!Number.isFinite(report.lat) || !Number.isFinite(report.lng)) return;
+        const trust = report.trust_score ?? 0.5;
+        ds.entities.add({
+          id: `report-${report.report_id ?? report.id ?? idx}`,
+          position: Cesium.Cartesian3.fromDegrees(Number(report.lng), Number(report.lat)),
+          point: {
+            pixelSize: 5 + Math.round(trust * 5),
+            color: Cesium.Color.fromCssColorString("#a78bfa")!.withAlpha(
+              0.35 + trust * 0.65,
+            ),
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 1,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          properties: { kind: "report", id: report.report_id ?? report.id ?? "" },
+        });
+      });
+    });
+  }, [data, ready, zoneIndex]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !ready) return;
+    LAYER_ORDER.forEach((key) => {
+      const ds = sourcesRef.current[key];
+      if (ds) ds.show = visible?.[key] !== false;
+    });
+  }, [ready, visible]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !ready || zoneIdList === "[]") return;
+
+    const valid = data.zones.filter(
+      (z) => Number.isFinite(z.centroid_lat) && Number.isFinite(z.centroid_lng),
+    );
+    if (valid.length === 0) return;
+
+    if (autoFit === "first") {
+      const first = valid[0];
       viewer.camera.flyTo({
         destination: Cesium.Cartesian3.fromDegrees(
           first.centroid_lng,
@@ -118,29 +449,58 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
         ),
         duration: 1.5,
       });
+      return;
     }
-  }, [zones, ready]);
+
+    const lats = valid.map((z) => z.centroid_lat);
+    const lngs = valid.map((z) => z.centroid_lng);
+    viewer.camera.flyTo({
+      destination: Cesium.Rectangle.fromDegrees(
+        Math.min(...lngs),
+        Math.min(...lats),
+        Math.max(...lngs),
+        Math.max(...lats),
+      ),
+      duration: 1.5,
+    });
+    // zoneIdList is the identity of the loaded zone set; coordinates arrive with it
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoneIdList, ready, autoFit, resetToken]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer || !ready || !onSelectZone) return;
+    if (!viewer || !ready || !focus) return;
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(
+        focus.lng,
+        focus.lat,
+        focus.height ?? 25000,
+      ),
+      duration: 1.2,
+    });
+  }, [ready, focus]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !ready) return;
+    if (!onSelectZone && !onSelectIncident && !onSelectResource) return;
 
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     handler.setInputAction((click: { position: Cesium.Cartesian2 }) => {
       const picked = viewer.scene.pick(click.position);
-      if (
-        Cesium.defined(picked) &&
-        picked.id &&
-        picked.id.properties &&
-        picked.id.properties.zone_id
-      ) {
-        const zoneId = picked.id.properties.zone_id.getValue();
-        onSelectZone(zoneId);
-      }
+      if (!Cesium.defined(picked) || !picked.id) return;
+      const props = picked.id.properties;
+      if (!props) return;
+      const kind = props.kind?.getValue();
+      const id = props.id?.getValue();
+      if (!kind || !id) return;
+      if (kind === "zone") onSelectZone?.(id);
+      if (kind === "incident") onSelectIncident?.(id);
+      if (kind === "resource") onSelectResource?.(id);
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
     return () => handler.destroy();
-  }, [ready, onSelectZone]);
+  }, [ready, onSelectZone, onSelectIncident, onSelectResource]);
 
   if (error) {
     return (
@@ -152,7 +512,7 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
           <div className="mb-2 font-medium text-slate-300">3D Globe unavailable</div>
           <div className="max-w-md">{error}</div>
           <div className="mt-3 text-xs text-slate-500">
-            Set VITE_CESIUM_ION_TOKEN to enable 3D visualization
+            The 3D globe needs a WebGL2-capable browser.
           </div>
         </div>
       </div>
@@ -165,6 +525,11 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
       {!ready && (
         <div className="absolute inset-0 flex items-center justify-center bg-[#0b1220]">
           <div className="text-sm text-slate-400">Loading 3D globe...</div>
+        </div>
+      )}
+      {ready && notice && !showControls && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-slate-900/80 px-3 py-1.5 text-[11px] text-slate-300">
+          {notice}
         </div>
       )}
     </div>

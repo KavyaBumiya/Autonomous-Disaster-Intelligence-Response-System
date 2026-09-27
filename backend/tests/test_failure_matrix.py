@@ -4,7 +4,7 @@ Every external dependency can fail; the system must:
   * keep provider state observable (registry state machine),
   * open the circuit after an OFFLINE streak (no network, no fabricated data),
   * serve cache when available and raise a DISTINCT "no cache" message when not,
-  * degrade to honest fallbacks (haversine route, offline Groq, None geocode),
+  * degrade to honest fallbacks (haversine route, offline AI gateway, None geocode),
   * survive Redis/DB outages (cache swallows, auth → 503),
   * report canonical provider groups + service reasons in /api/health.
 
@@ -28,7 +28,7 @@ from app.main import health
 from app.pollers.seismic import poll_seismic
 from app.schemas.observations import ForecastResult, ForecastSlice, WeatherObservation
 from app.services.geocoding import geocode
-from app.services.groq_gateway import AILogRecord, GroqGateway, _log_call, groq_gateway
+from app.services.ai_gateway import AILogRecord, AIGateway, _log_call, ai_gateway
 from app.services.route_intelligence import calculate_route
 from app.services.weather_service import weather_service
 
@@ -96,7 +96,7 @@ def test_canonical_statuses_worst_wins():
 
     canon = registry.canonical_statuses()
     assert set(canon) == {
-        "weather", "seismic", "gis", "routing", "geocoding", "groq",
+        "weather", "seismic", "gis", "routing", "geocoding", "ai",
         "natural_events",
     }
     assert canon["weather"] == "ONLINE"
@@ -470,48 +470,48 @@ def test_poll_seismic_survives_usgs_down():
     run(main())
 
 
-# ── Groq: offline fallback + registry recording (§31/§34) ───────────────────
+# ── AI gateway: offline fallback + registry recording (§31/§34) ────────────────
 
-def test_groq_unavailable_returns_offline_fallback():
+def test_ai_unavailable_returns_offline_fallback():
     async def main():
         with patch.object(
-            GroqGateway, "available", new_callable=PropertyMock, return_value=False
+            AIGateway, "available", new_callable=PropertyMock, return_value=False
         ):
-            resp = await groq_gateway.command_query("Which resources are available?")
+            resp = await ai_gateway.command_query("Which resources are available?")
         assert "offline" in resp.response.lower()
         assert resp.model_used == "offline-fallback"
 
     run(main())
 
 
-def test_groq_call_failure_falls_back_and_records_registry():
+def test_ai_call_failure_falls_back_and_records_registry():
     async def main():
         with patch.object(
-            GroqGateway, "available", new_callable=PropertyMock, return_value=True
+            AIGateway, "available", new_callable=PropertyMock, return_value=True
         ), patch.object(
-            GroqGateway,
+            AIGateway,
             "_call_with_tools",
-            new=AsyncMock(side_effect=RuntimeError("groq down")),
+            new=AsyncMock(side_effect=RuntimeError("nvidia down")),
         ):
-            resp = await groq_gateway.command_query("What is the flood risk?")
+            resp = await ai_gateway.command_query("What is the flood risk?")
         assert "offline" in resp.response.lower()   # honest fallback, no crash
-        assert registry.get_status("groq") in ("DEGRADED", "OFFLINE")
+        assert registry.get_status("nvidia") in ("DEGRADED", "OFFLINE")
 
     run(main())
 
 
-def test_groq_success_recorded_in_registry():
+def test_ai_success_recorded_in_registry():
     log = AILogRecord(task_type="test", model="m", success=True, latency_ms=42.0)
     _log_call(log)
-    assert registry.get_status("groq") == "ONLINE"
-    snap = registry.snapshot()["groq"]
+    assert registry.get_status("nvidia") == "ONLINE"
+    snap = registry.snapshot()["nvidia"]
     assert snap["latency_ms"] == 42.0
     assert log.success is True
 
 
-def test_groq_failure_recorded_in_registry():
+def test_ai_failure_recorded_in_registry():
     _log_call(AILogRecord(task_type="test", model="m", success=False, error="rate limited"))
-    snap = registry.snapshot()["groq"]
+    snap = registry.snapshot()["nvidia"]
     assert snap["status"] == "OFFLINE"          # no prior success → OFFLINE
     assert "rate limited" in snap["last_error"]
     assert snap["total_failures"] == 1
@@ -557,7 +557,7 @@ def test_health_canonical_provider_keys_and_services():
             body = await health()
         assert body["status"] == "ok"
         assert body["reasons"] == []
-        for key in ("weather", "seismic", "gis", "routing", "geocoding", "groq",
+        for key in ("weather", "seismic", "gis", "routing", "geocoding", "ai",
                     "natural_events"):
             assert key in body["providers"], key
             assert body["providers"][key]["status"] in (

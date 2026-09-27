@@ -4,6 +4,7 @@ import { SystemStatus } from "./SystemStatus";
 import { Button } from "./ui";
 
 const NAV = [
+  { to: "/map", label: "Map", icon: "◉" },
   { to: "/dashboard", label: "Dashboard", icon: "▦" },
   { to: "/command", label: "Command", icon: "◈" },
   { to: "/resources", label: "Resources", icon: "⬡" },

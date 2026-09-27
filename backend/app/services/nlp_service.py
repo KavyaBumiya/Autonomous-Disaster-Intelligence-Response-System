@@ -10,8 +10,8 @@ NLP Service v2 — Enhanced pipeline with HuggingFace Transformers:
 
 Falls back to spaCy keyword rules if the transformer model is absent.
 
-LLM structured extraction lives in the Groq AI Gateway
-(`app.services.report_parser` / `groq_gateway.parse_report`) — this module
+LLM structured extraction lives in the AI Gateway
+(`app.services.report_parser` / `ai_gateway.parse_report`) — this module
 is deliberately deterministic so classification confidence is auditable.
 """
 import json
@@ -222,7 +222,7 @@ async def process(text: str) -> dict:
             lng = geo["lng"]
             geocoding_confidence = geo.get("confidence")
 
-    # NOTE: Structured LLM extraction / translation is handled by the Groq
+    # NOTE: Structured LLM extraction / translation is handled by the AI
     # AI Gateway in the orchestrator pipeline — not here. Keeping this
     # service deterministic means nlp_confidence is always model-auditable.
 

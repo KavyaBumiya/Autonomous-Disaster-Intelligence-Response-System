@@ -69,7 +69,7 @@ class TomTomConnector(BaseConnector):
         zoom: int = 10,
     ) -> dict[str, Any]:
         params = self._add_key({"zoom": str(zoom), "style": "absolute"})
-        resp = await self.getJson(
+        resp = await self.get_json(
             f"/traffic/services/4/flowSegmentData/absolute/{zoom}/json",
             params=params,
         )
@@ -98,7 +98,7 @@ class TomTomConnector(BaseConnector):
         if lat is not None and lng is not None:
             params["lat"] = str(lat)
             params["lon"] = str(lng)
-        resp = await self.getJson("/search/2/search/{query}.json".format(query=query), params=params)
+        resp = await self.get_json("/search/2/search/{query}.json".format(query=query), params=params)
         data = resp.json()
         results = data.get("results", [])
         return [

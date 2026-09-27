@@ -24,7 +24,7 @@ Actions pending commander approval are created when priority ≥ APPROVAL_THRESH
 ARCHITECTURE CONSTRAINT:
   The LLM MUST NOT modify, override, or substitute this calculation.
   The engine receives structured evidence and produces the score deterministically.
-  Groq may EXPLAIN the output but never generate the number.
+  The AI layer may EXPLAIN the output but never generate the number.
 """
 from __future__ import annotations
 

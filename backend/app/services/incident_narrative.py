@@ -1,12 +1,18 @@
 """
 AEGIS-AI — Incident narrative persistence
 ==========================================
-Fills Incident.groq_summary and Incident.groq_explanation from the Groq
+Fills Incident.groq_summary and Incident.groq_explanation from the AI
 Gateway using ONLY deterministic engine evidence (PRD §8).
 
 The LLM words the narrative; it never invents priority scores, victim counts,
 or resource recommendations. Fields are written once (or forced on demand)
-so Evidence / Approval panels can read them without re-calling Groq every time.
+so Evidence / Approval panels can read them without re-calling the AI layer
+every time.
+
+NOTE: the column names still carry the legacy `groq_` prefix from before the
+NVIDIA migration. They are persisted ORM fields (migration 0003) and are
+intentionally left as-is so no schema migration is needed; only the provider
+behind them changed.
 """
 from __future__ import annotations
 
@@ -14,7 +20,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.incident import Incident
-from app.services.groq_gateway import groq_gateway
+from app.services.ai_gateway import ai_gateway
 
 logger = structlog.get_logger()
 
@@ -56,7 +62,7 @@ async def ensure_incident_narrative(
     Populate groq_summary / groq_explanation when missing (or when force=True).
 
     Safe to call repeatedly — no-ops when both fields are already set and
-    force is False. Groq failures leave the fields untouched (original XAI
+    force is False. AI failures leave the fields untouched (original XAI
     string remains available to the UI).
     """
     need_summary = force or not (incident.groq_summary or "").strip()
@@ -66,25 +72,25 @@ async def ensure_incident_narrative(
 
     if need_summary:
         try:
-            incident.groq_summary = await groq_gateway.summarise_incident(
+            incident.groq_summary = await ai_gateway.summarise_incident(
                 await _evidence_bundle(incident, db)
             )
         except Exception as exc:
             logger.warning(
-                "groq_summary_failed",
+                "incident_summary_failed",
                 incident_id=incident.id,
                 error=str(exc),
             )
 
     if need_explain and (incident.xai_reasoning or "").strip():
         try:
-            incident.groq_explanation = await groq_gateway.explain_xai(
+            incident.groq_explanation = await ai_gateway.explain_xai(
                 xai_reasoning=incident.xai_reasoning or "",
                 incident_id=incident.id,
             )
         except Exception as exc:
             logger.warning(
-                "groq_explanation_failed",
+                "incident_explanation_failed",
                 incident_id=incident.id,
                 error=str(exc),
             )

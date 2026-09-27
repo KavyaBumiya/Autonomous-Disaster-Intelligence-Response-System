@@ -2,7 +2,7 @@
 WeatherService — backend-owned weather retrieval (PRD §6).
 
 Single entrypoint for the poller, prediction engine, API endpoints and
-Groq tools — nobody calls Open-Meteo directly anymore.
+AI tools — nobody calls Open-Meteo directly anymore.
 
 Capabilities:
     get_current_weather(lat, lng, allow_stale=False) -> WeatherObservation
