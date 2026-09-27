@@ -34,6 +34,7 @@ models/nlp/v1/model.safetensors
 backend/media/audio/
 
 # Node
+node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
