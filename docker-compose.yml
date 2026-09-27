@@ -52,19 +52,9 @@ services:
     command: >
       sh -c "alembic upgrade head && python seed.py && uvicorn app.main:socket_app --host 0.0.0.0 --port 8000"
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: aegisai_frontend
-    restart: unless-stopped
-    env_file: .env
-    ports:
-      - "8080:80"     # host 80 may need elevation; grafana uses 3000
-    volumes:
-      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      - backend
+  # The operator UI is built and hosted separately, so there is no frontend
+  # service here. It talks to this API over HTTP/WebSocket; set FRONTEND_ORIGIN
+  # in .env to allow its origin.
 
 volumes:
   pgdata:

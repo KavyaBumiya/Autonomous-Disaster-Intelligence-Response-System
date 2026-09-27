@@ -78,22 +78,6 @@ AEGIS-AI/
 │   ├── seed.py                  # Demo data seeder
 │   ├── requirements.txt
 │   └── Dockerfile
-├── frontend/                    # Vite + React + TypeScript (operator UI)
-│   ├── public/                  # Static assets
-│   ├── src/
-│   │   ├── components/          # ResourcePanel, RouteIntelligence, VictimDetection…
-│   │   ├── pages/               # CommandCenter, CriticalZone3D, LiveIncidentsPanel…
-│   │   ├── hooks/               # Custom React hooks
-│   │   ├── services/            # API services
-│   │   ├── store/               # State management
-│   │   ├── types/               # TypeScript types
-│   │   ├── utils/               # Utility functions
-│   │   └── assets/              # Images, icons
-│   ├── index.html
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   ├── tsconfig.json
-│   └── package.json
 ├── scripts/                     # Utility scripts
 │   └── download.sh              # Downloads fine-tuned NLP model weights
 ├── docs/                        # Project documentation & PRDs

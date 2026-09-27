@@ -30,22 +30,6 @@ AEGIS-AI/
 │   ├── seed.py                  # Demo data seeder
 │   ├── requirements.txt
 │   └── Dockerfile
-├── frontend/                    # Vite + React + TypeScript (operator UI)
-│   ├── public/                  # Static assets
-│   ├── src/
-│   │   ├── components/          # ResourcePanel, RouteIntelligence, VictimDetection…
-│   │   ├── pages/               # CommandCenter, CriticalZone3D, LiveIncidentsPanel…
-│   │   ├── hooks/               # Custom React hooks
-│   │   ├── services/            # API services
-│   │   ├── store/               # State management
-│   │   ├── types/               # TypeScript types
-│   │   ├── utils/               # Utility functions
-│   │   └── assets/              # Images, icons
-│   ├── index.html
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   ├── tsconfig.json
-│   └── package.json
 ├── scripts/                     # Utility scripts
 │   └── download.sh              # Downloads fine-tuned NLP model weights
 ├── docs/                        # Project documentation & PRDs
@@ -73,10 +57,12 @@ docker-compose up --build
 
 | Service   | URL                        |
 |-----------|---------------------------|
-| Frontend  | http://localhost:3000      |
 | API root  | http://localhost:8000/api  |
 | API docs  | http://localhost:8000/docs |
 | Health    | http://localhost:8000/api/health |
+
+> The operator UI is built and hosted separately from this repository. Point
+> it at the API above and set `FRONTEND_ORIGIN` in `.env` to allow its origin.
 
 ### API surface
 
@@ -116,12 +102,9 @@ pip install -r requirements.txt
 alembic upgrade head
 python seed.py
 uvicorn app.main:app --reload --port 8000
-
-# Frontend (operator UI)
-cd frontend
-npm install
-npm run dev
 ```
+
+> No frontend step: the operator UI lives outside this repository.
 
 ---
 
