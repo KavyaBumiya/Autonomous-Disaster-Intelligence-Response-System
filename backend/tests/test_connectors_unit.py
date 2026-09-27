@@ -3,9 +3,11 @@
 Every external provider response is mocked with respx (httpx transport) —
 no live network. Verifies the §5 normalization contracts:
     Open-Meteo  → WeatherObservation / ForecastResult
+    MET Norway  → WeatherObservation / ForecastResult (weather fallback)
     USGS        → GeoJSON passthrough + bare-Feature normalization
     OSRM        → {distance_m, duration_s, geometry} | None
     Nominatim   → ranked candidates with honest confidence
+    Photon      → ranked candidates (geocoding fallback)
     Overpass    → InfrastructureObservation categories
 
 Plus BaseConnector registry recording (§34) on success and failure.
@@ -29,7 +31,9 @@ from app.integrations.gis.overpass import (
     build_infrastructure_query,
     normalize_elements,
 )
+from app.integrations.gis.photon import PhotonConnector
 from app.integrations.seismic.usgs import UsgsConnector
+from app.integrations.weather.met_norway import MetNorwayConnector, symbol_to_main_desc
 from app.integrations.weather.open_meteo import OpenMeteoConnector
 from app.schemas.observations import EarthquakeObservation
 
@@ -289,6 +293,134 @@ async def test_nominatim_error_object_returns_empty_list():
         return_value=httpx.Response(200, json={"error": "Unable to geocode"})
     )
     assert await NominatimConnector().search("???", limit=3) == []
+
+
+# ── MET Norway (weather fallback) ────────────────────────────────────────────
+
+_MET_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact"
+
+_MET_COMPACT = {
+    "properties": {
+        "meta": {"updated_at": "2026-09-25T13:17:50Z"},
+        "timeseries": [
+            {
+                "time": "2026-09-25T15:00:00Z",
+                "data": {
+                    "instant": {"details": {
+                        "air_temperature": 29.1,
+                        "wind_speed": 5.0,          # m/s → 18.0 km/h
+                        "relative_humidity": 76.7,
+                    }},
+                    "next_1_hours": {
+                        "summary": {"symbol_code": "heavyrain_day"},
+                        "details": {"precipitation_amount": 2.5},
+                    },
+                },
+            },
+            {
+                "time": "2026-09-25T16:00:00Z",
+                "data": {
+                    "instant": {"details": {
+                        "air_temperature": 28.4, "wind_speed": 4.0,
+                        "relative_humidity": 80.0,
+                    }},
+                    # No next_1_hours — only the 6-hour bucket available
+                    "next_6_hours": {
+                        "summary": {"symbol_code": "partlycloudy_day"},
+                        "details": {"precipitation_amount": 6.0},
+                    },
+                },
+            },
+        ],
+    }
+}
+
+
+@respx.mock
+async def test_met_norway_current_normalization():
+    respx.get(_MET_URL).mock(return_value=httpx.Response(200, json=_MET_COMPACT))
+    obs = await MetNorwayConnector().get_current_weather(22.30, 73.19)
+    assert obs.source == "met-norway"
+    assert obs.temperature_c == 29.1
+    assert obs.wind_speed_kmh == 18.0          # 5.0 m/s × 3.6
+    assert obs.humidity_pct == 76.7
+    assert obs.rainfall_mm_hr == 2.5           # next_1_hours bucket
+    assert obs.weather_main == "Rain"
+    assert obs.weather_description == "Heavy rain"
+    assert obs.timestamp == datetime(2026, 9, 25, 15, 0, tzinfo=timezone.utc)
+    assert registry.get_status("met-norway") == "ONLINE"
+
+
+@respx.mock
+async def test_met_norway_forecast_normalization():
+    respx.get(_MET_URL).mock(return_value=httpx.Response(200, json=_MET_COMPACT))
+    fc = await MetNorwayConnector().get_forecast(22.30, 73.19, hours=6)
+    assert fc.source == "met-norway"
+    assert len(fc.hours) == 2                  # only 2 entries available
+    assert fc.hours[0].precipitation_mm == 2.5  # next_1_hours
+    assert fc.hours[1].precipitation_mm == 1.0  # next_6_hours 6.0 / 6
+    assert fc.hours[0].temperature_c == 29.1
+    assert fc.hours[0].precipitation_probability_pct is None  # honest: no prob
+
+
+@respx.mock
+async def test_met_norway_missing_timeseries_raises():
+    respx.get(_MET_URL).mock(return_value=httpx.Response(200, json={"properties": {}}))
+    with pytest.raises(ConnectorError) as ei:
+        await MetNorwayConnector().get_current_weather(22.0, 73.0)
+    assert ei.value.retryable is False
+
+
+def test_met_norway_symbol_mapping():
+    assert symbol_to_main_desc("clearsky_day") == ("Clear", "Clear sky")
+    assert symbol_to_main_desc("heavyrainshowers_night") == (
+        "Rain Showers", "Heavy rain showers",
+    )
+    assert symbol_to_main_desc("thunderstorm") == ("Thunderstorm", "Thunderstorm")
+    assert symbol_to_main_desc("partlycloudy_polartwilight") == (
+        "Clouds", "Partly cloudy",
+    )
+    assert symbol_to_main_desc("lightsnow") == ("Snow", "Light snow")
+    assert symbol_to_main_desc(None) == ("Unknown", "Unknown condition")
+
+
+# ── Photon (geocoding fallback) ──────────────────────────────────────────────
+
+@respx.mock
+async def test_photon_search_normalization():
+    respx.get("https://photon.komoot.io/api/").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "name": "Vadodara", "state": "Gujarat",
+                            "country": "India", "countrycode": "IN",
+                            "osm_type": "N", "osm_id": 2022807192,
+                            "osm_key": "place", "osm_value": "city",
+                        },
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [73.1942567, 22.2973142],
+                        },
+                    },
+                    {"type": "Feature", "geometry": None},   # skipped — no coords
+                ],
+            },
+        )
+    )
+    out = await PhotonConnector().search("Vadodara", limit=5)
+    assert len(out) == 1
+    first = out[0]
+    assert first["lat"] == 22.2973142 and first["lng"] == 73.1942567
+    assert first["display_name"] == "Vadodara, Gujarat, India"
+    assert first["confidence"] == 0.5          # neutral — photon has no importance
+    assert first["category"] == "place" and first["type"] == "city"
+    assert first["osm_type"] == "N" and first["osm_id"] == 2022807192
+    assert registry.get_status("photon") == "ONLINE"
 
 
 # ── Overpass ────────────────────────────────────────────────────────────────

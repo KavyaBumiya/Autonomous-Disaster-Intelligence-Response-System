@@ -100,6 +100,12 @@ class Settings(BaseSettings):
     overpass_api_url:        str = "https://overpass-api.de/api/interpreter"
     osrm_api_base:           str = "https://router.project-osrm.org"
     nominatim_base_url:      str = "https://nominatim.openstreetmap.org"
+    # Fallback providers (used when the primary source is unavailable):
+    # MET Norway Locationforecast (keyless; identifying UA required by policy)
+    # and Photon/Komoot geocoder (keyless OSM-based, cloud-IP friendly).
+    met_norway_base_url:     str = "https://api.met.no/weatherapi/locationforecast/2.0"
+    met_norway_user_agent:   str = "AegisAI/1.0 (public demo; contact: ops@aegis.local)"
+    photon_base_url:         str = "https://photon.komoot.io"
     reliefweb_api_url:       str = "https://api.reliefweb.int/v1/"
     twitter_bearer_token:    str = ""
     mapbox_access_token:     str = ""
@@ -115,6 +121,24 @@ class Settings(BaseSettings):
     nasa_api_base:              str = "https://api.nasa.gov"
     eonet_base_url:             str = "https://eonet.gsfc.nasa.gov/api/v3"
     eonet_poll_interval_minutes: int = 10
+
+    # ── Google Maps ─────────────────────────────────────────────────────────
+    google_maps_api_key: str = ""
+
+    # ── OpenAI ───────────────────────────────────────────────────────────────
+    openai_api_key: str = ""
+
+    # ── NASA FIRMS ───────────────────────────────────────────────────────────
+    nasa_firms_api_key: str = ""
+    nasa_firms_base_url: str = "https://firms.modaps.eosdis.nasa.gov/api"
+
+    # ── TomTom ───────────────────────────────────────────────────────────────
+    tomtom_api_key: str = ""
+    tomtom_base_url: str = "https://api.tomtom.com"
+
+    # ── Cesium Ion ───────────────────────────────────────────────────────────
+    cesium_ion_token: str = ""
+    cesium_ion_asset_id: int = 0
 
     # ── Evidence fusion (PRD §15 — optional 7th priority factor) ─────────
     # 0.0 (default) keeps the PRD 6-factor formula unchanged; raise

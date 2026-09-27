@@ -316,9 +316,9 @@ async def _seed_api_rows() -> None:
         await db.commit()
 
 
-def test_eonet_endpoint_requires_auth(client: TestClient):
+def test_eonet_endpoint_public(client: TestClient):
     r = client.get("/api/nasa/eonet/events")
-    assert r.status_code == 401
+    assert r.status_code == 200
 
 
 def test_eonet_endpoint_contract_and_filters(client: TestClient, auth_headers):

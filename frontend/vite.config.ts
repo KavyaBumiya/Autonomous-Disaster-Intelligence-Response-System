@@ -32,7 +32,7 @@ export default defineConfig({
       output: {
         manualChunks(id: string) {
           if (id.includes("node_modules")) {
-            if (id.includes("mapbox-gl") || id.includes("mapbox")) return "mapbox";
+            if (id.includes("cesium")) return "cesium";
             if (
               id.includes("react-router") ||
               id.includes("@remix-run") ||

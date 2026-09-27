@@ -21,7 +21,7 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, Base, engine
 from app.services.websocket import sio
 from app.pollers.scheduler import start_scheduler, stop_scheduler
-from app.api import reports, incidents, zones, actions, auth, resources, predictions, command, phase2, heatmaps, routes, earthquakes, weather, nasa
+from app.api import reports, incidents, zones, actions, auth, resources, predictions, command, phase2, heatmaps, routes, earthquakes, weather, nasa, maps, openai, firms, traffic, globe
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -48,6 +48,46 @@ def _stamp_alembic_head() -> None:
     command.stamp(_alembic_config(), "head")
 
 
+async def _reconcile_missing_columns() -> list[str]:
+    """Add model columns missing from pre-existing tables.
+
+    create_all() only creates missing tables — it never ALTERs existing ones,
+    and migrations are stamped (not applied), so columns added to the models
+    after a table's first creation would 500 at query time (e.g. prod
+    reports.geocoding_confidence from migration 0006). Idempotent and cheap:
+    inspect every metadata table, ADD COLUMN IF NOT EXISTS for the difference.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    def _sync(sync_conn):
+        inspector = sa_inspect(sync_conn)
+        existing_tables = set(inspector.get_table_names())
+        added: list[str] = []
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue  # create_all handles missing tables
+            have = {c["name"] for c in inspector.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in have:
+                    continue
+                col_type = col.type.compile(dialect=sync_conn.dialect)
+                ddl = f'ALTER TABLE "{table.name}" ADD COLUMN IF NOT EXISTS "{col.name}" {col_type}'
+                if col.server_default is not None:
+                    arg = col.server_default.arg
+                    rendered = (
+                        str(arg.compile(dialect=sync_conn.dialect))
+                        if hasattr(arg, "compile")
+                        else str(arg)
+                    )
+                    ddl += f" DEFAULT {rendered}"
+                sync_conn.execute(text(ddl))
+                added.append(f"{table.name}.{col.name}")
+        return added
+
+    async with engine.begin() as conn:
+        return await conn.run_sync(_sync)
+
+
 async def _ensure_schema() -> None:
     """Create extensions + full schema from models, then seed demo users."""
     import app.models  # noqa: F401 — register models for create_all
@@ -66,7 +106,16 @@ async def _ensure_schema() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("metadata.create_all complete")
-        # Tables already match models — stamp head so alembic does not re-create them
+        # create_all never ALTERs — repair model/table drift before stamping
+        try:
+            added = await _reconcile_missing_columns()
+            if added:
+                logger.warning("schema_columns_added", columns=added)
+            else:
+                logger.info("schema reconcile — no missing columns")
+        except Exception as exc:
+            logger.warning("column reconcile failed", error=str(exc))
+        # Tables now match models — stamp head so alembic does not re-create them
         await asyncio.to_thread(_stamp_alembic_head)
         logger.info("Alembic stamped at head")
     except Exception as exc:
@@ -244,6 +293,11 @@ app.include_router(phase2.router,      tags=["phase 2 intelligence"])
 app.include_router(heatmaps.router,    tags=["heatmaps"])
 app.include_router(weather.router,     prefix="/api/weather", tags=["weather"])
 app.include_router(nasa.router,        prefix="/api/nasa",    tags=["nasa"])
+app.include_router(maps.router,       prefix="/api/maps",   tags=["maps"])
+app.include_router(openai.router,     prefix="/api/openai", tags=["openai"])
+app.include_router(firms.router,      prefix="/api/firms",  tags=["nasa-firms"])
+app.include_router(traffic.router,    prefix="/api/traffic", tags=["tomtom"])
+app.include_router(globe.router,      prefix="/api/globe",  tags=["cesium-ion"])
 
 
 async def _database_ping() -> None:

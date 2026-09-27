@@ -21,23 +21,22 @@ import {
   resourcesApi,
   commandApi,
   heatmapsApi,
-  getToken,
   type Zone,
   type Incident,
   type Resource,
 } from "@/services/api";
 import { useSystemHealthStore } from "@/stores/systemHealthStore";
 
-const OperationalMap = lazy(() =>
-  import("@/components/OperationalMap").then((m) => ({ default: m.OperationalMap }))
+const CesiumGlobe = lazy(() =>
+  import("@/components/CesiumGlobe").then((m) => ({ default: m.CesiumGlobe }))
 );
 
 const MapFallback = ({ label }: { label: string }) => (
   <div className="ops-panel flex min-h-[320px] items-center justify-center p-6 text-center">
     <div>
       <div className="ops-kicker mb-2">{label}</div>
-      <div className="ops-title">Loading map engine…</div>
-      <p className="mt-2 text-sm text-slate-400">Mapbox loads only when the map is needed.</p>
+      <div className="ops-title">Loading 3D engine…</div>
+      <p className="mt-2 text-sm text-slate-400">Cesium loads only when the globe is needed.</p>
     </div>
   </div>
 );
@@ -223,8 +222,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   const effectiveHeatmapData = selectedZone ? heatmapData : null;
   const effectiveActiveHeatmap = selectedZone ? activeHeatmap : null;
 
-  const authenticated = Boolean(getToken());
-
   // Fetch zones from API with priority info
   const {
     data: zoneResponse,
@@ -238,12 +235,11 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       const res = await zonesApi.withPriority();
       return res.data;
     },
-    enabled: authenticated,
     refetchInterval: isConnected ? 15000 : 30000,
   });
 
   const zones = useMemo(() => zoneResponse?.zones ?? [], [zoneResponse]);
-  const zonesUnavailable = authenticated && !loadingZones && !zonesError && zones.length === 0;
+  const zonesUnavailable = !loadingZones && !zonesError && zones.length === 0;
   const apiBase = (import.meta.env.VITE_API_BASE_URL || "/").replace(/\/$/, "");
   const isVercelHost =
     typeof window !== "undefined" &&
@@ -254,17 +250,13 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       apiBase === "/" ||
       apiBase.includes("localhost") ||
       apiBase.includes("127.0.0.1"));
-  const zoneErrorMessage = !authenticated
-    ? "Sign in with an operator account to load live zones."
-    : axios.isAxiosError(zonesError)
-      ? zonesError.response?.status === 401
-        ? "Sign in with an operator account to load live zones."
-        : isLocalBackend
-          ? "Backend API is offline. Start Docker Desktop and run docker compose up."
-          : `Backend API is unreachable at ${apiBase || window.location.origin}. Check VITE_API_BASE_URL and that the API is running.`
-      : zonesError
-        ? "Could not reach the backend API. It may still be starting — retry shortly."
-        : "No live zones returned from the backend.";
+  const zoneErrorMessage = axios.isAxiosError(zonesError)
+    ? isLocalBackend
+      ? "Backend API is offline. Start Docker Desktop and run docker compose up."
+      : `Backend API is unreachable at ${apiBase || window.location.origin}. Check VITE_API_BASE_URL and that the API is running.`
+    : zonesError
+      ? "Could not reach the backend API. It may still be starting — retry shortly."
+      : "No live zones returned from the backend.";
 
   type QueryLike<T> = {
     data?: T;
@@ -276,34 +268,10 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
     q: QueryLike<T>,
     render: (data: T) => React.ReactNode,
   ): { value: React.ReactNode; detail?: React.ReactNode; tone?: KPIItemTone } {
-    if (!authenticated) {
-      return {
-        value: "Sign in required",
-        detail: "Live data loads after operator login",
-        tone: "amber",
-      };
-    }
     if (q.isLoading) {
       return { value: "…", detail: "Loading…", tone: "default" };
     }
     if (q.error) {
-      const status = axios.isAxiosError(q.error)
-        ? q.error.response?.status
-        : undefined;
-      if (status === 401) {
-        return {
-          value: "Sign in required",
-          detail: "Authentication required",
-          tone: "amber",
-        };
-      }
-      if (status === 403) {
-        return {
-          value: "—",
-          detail: "Insufficient permissions",
-          tone: "amber",
-        };
-      }
       return {
         value: "—",
         detail: "Unable to load — retry shortly",
@@ -325,7 +293,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       const res = await incidentsApi.list({ active_only: true, limit: 200 });
       return res.data;
     },
-    enabled: authenticated,
     refetchInterval: isConnected ? 15000 : 30000,
   });
 
@@ -335,7 +302,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       const res = await resourcesApi.list({});
       return res.data;
     },
-    enabled: authenticated,
     refetchInterval: isConnected ? 15000 : 30000,
   });
 
@@ -345,7 +311,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       const res = await commandApi.approvalQueue();
       return res.data;
     },
-    enabled: authenticated,
     refetchInterval: 15000,
   });
 
@@ -436,13 +401,12 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             return {
               label: "Active incidents",
               value: k.value,
-              detail:
-                authenticated && incidentsQuery.data
-                  ? `${
-                      incidentsQuery.data.incidents.filter((i) => (i.priority_score || 0) > 70)
-                        .length
-                    } need attention`
-                  : k.detail,
+              detail: incidentsQuery.data
+                ? `${
+                    incidentsQuery.data.incidents.filter((i) => (i.priority_score || 0) > 70)
+                      .length
+                  } need attention`
+                : k.detail,
               tone: k.tone === "default" ? "red" : k.tone,
             };
           })(),
@@ -455,10 +419,9 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             return {
               label: "People at risk",
               value: k.value,
-              detail:
-                authenticated && incidentsQuery.data
-                  ? "Detected across active zones"
-                  : k.detail,
+              detail: incidentsQuery.data
+                ? "Detected across active zones"
+                : k.detail,
               tone: k.tone === "default" ? "amber" : k.tone,
             };
           })(),
@@ -472,7 +435,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
               return `${Math.round((avail / list.length) * 100)}%`;
             });
             const showProgress =
-              authenticated && !resourcesQuery.isLoading && !resourcesQuery.error && resources.length > 0;
+              !resourcesQuery.isLoading && !resourcesQuery.error && resources.length > 0;
             return {
               label: "Response readiness",
               value: k.value,
@@ -488,12 +451,11 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             return {
               label: "Actions awaiting approval",
               value: k.value,
-              detail:
-                authenticated && queueQuery.data
-                  ? queueQuery.data.pending_count === 0
-                    ? "Queue is clear"
-                    : "Commander review required"
-                  : k.detail,
+              detail: queueQuery.data
+                ? queueQuery.data.pending_count === 0
+                  ? "Queue is clear"
+                  : "Commander review required"
+                : k.detail,
               tone: (k.tone === "default" ? "amber" : k.tone) as KPIItemTone,
             };
           })(),
@@ -520,7 +482,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
               navigate(`/dashboard/${zoneId || ""}`, { replace: true });
             }}
             className="ops-select min-w-[250px]"
-            disabled={!authenticated || loadingZones || zonesUnavailable}
+            disabled={loadingZones || zonesUnavailable}
           >
             <option value="">All operational zones</option>
             {zones.map((zone) => (
@@ -556,17 +518,16 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
           <div className="ops-panel ops-glow overflow-hidden">
             <div className="ops-panel-header">
               <div>
-                <div className="ops-kicker">Operational map</div>
+                <div className="ops-kicker">3D Globe</div>
                 <div className="ops-title">Threat landscape</div>
               </div>
               <span className="ops-mono text-xs text-slate-400">
                 {effectiveHeatmapData ? "LIVE LAYER" : "SIMULATION"}
               </span>
             </div>
-            <Suspense fallback={<MapFallback label="Operational map" />}>
-              <OperationalMap
+            <Suspense fallback={<MapFallback label="3D Globe" />}>
+              <CesiumGlobe
                 zones={zones}
-                selectedZone={activeZone}
                 onSelectZone={(zoneId) => {
                   setSelectedZone(zoneId);
                   navigate(`/dashboard/${zoneId}`, { replace: true });
@@ -609,11 +570,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
               </div>
             </div>
             <div className="ops-panel-body space-y-3">
-              {!authenticated ? (
-                <p className="text-xs text-slate-500">
-                  Sign in to load the approval queue.
-                </p>
-              ) : queueQuery.isLoading ? (
+              {queueQuery.isLoading ? (
                 <p className="text-xs text-slate-500">Loading approval queue…</p>
               ) : queueQuery.error ? (
                 <p className="text-xs text-[#ff6b6b]">Unable to load approval queue.</p>
@@ -644,8 +601,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
                   </button>
                 ))
               )}
-              {authenticated &&
-                !queueQuery.isLoading &&
+              {!queueQuery.isLoading &&
                 !queueQuery.error &&
                 (queueData?.actions ?? []).length === 0 && (
                   <p className="text-xs text-slate-500">No pending actions — queue is clear.</p>

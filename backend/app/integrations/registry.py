@@ -30,13 +30,13 @@ OFFLINE_AFTER_FAILURES = 3
 CIRCUIT_COOLDOWN_SECONDS = 60.0
 
 # Canonical provider groups surfaced by /api/health (plan Phase 16, §31).
-# Worst-status wins when a group has multiple sources.
+# Groups may list a primary and a fallback source (weather, geocoding).
 CANONICAL_GROUPS: dict[str, tuple[str, ...]] = {
-    "weather": ("open-meteo",),
+    "weather": ("open-meteo", "met-norway"),
     "seismic": ("usgs",),
     "gis": ("osm/overpass",),
     "routing": ("osrm",),
-    "geocoding": ("nominatim",),
+    "geocoding": ("nominatim", "photon"),
     "groq": ("groq",),
     "natural_events": ("nasa/eonet",),
 }
@@ -148,12 +148,20 @@ def canonical_statuses(snap: dict[str, dict[str, Any]] | None = None) -> dict[st
 
     Keys: weather, seismic, gis, routing, geocoding, groq →
     ONLINE | DEGRADED | OFFLINE | UNKNOWN (never-probed groups stay UNKNOWN).
+
+    Multi-source groups (weather = open-meteo + met-norway, geocoding =
+    nominatim + photon) report the CAPABILITY's availability: ONLINE when
+    any source is ONLINE (a fallback serving means the capability works);
+    otherwise the worst status among the sources.
     """
     data = snap if snap is not None else snapshot()
     out: dict[str, str] = {}
     for group, names in CANONICAL_GROUPS.items():
         statuses = [data.get(n, {}).get("status", "UNKNOWN") for n in names]
-        out[group] = max(statuses, key=lambda s: _STATUS_RANK.get(s, 1))
+        if "ONLINE" in statuses:
+            out[group] = "ONLINE"
+        else:
+            out[group] = max(statuses, key=lambda s: _STATUS_RANK.get(s, 1))
     return out
 
 

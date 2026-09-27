@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import time
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, PropertyMock, patch
 
 import pytest
@@ -25,6 +26,7 @@ from app.integrations.base import ConnectorError
 from app.integrations.weather.open_meteo import OpenMeteoConnector
 from app.main import health
 from app.pollers.seismic import poll_seismic
+from app.schemas.observations import ForecastResult, ForecastSlice, WeatherObservation
 from app.services.geocoding import geocode
 from app.services.groq_gateway import AILogRecord, GroqGateway, _log_call, groq_gateway
 from app.services.route_intelligence import calculate_route
@@ -103,6 +105,24 @@ def test_canonical_statuses_worst_wins():
     assert canon["natural_events"] == "UNKNOWN"  # EONET never probed
 
 
+def test_canonical_statuses_any_source_online():
+    # Multi-source groups report capability availability: a fallback source
+    # serving means weather/geocoding still work (2026-09 fallback feature).
+    registry.record_failure("open-meteo", "HTTP 429")
+    registry.record_success("met-norway", 40.0)
+    registry.record_failure("nominatim", "cloud IP blocked")
+    registry.record_success("photon", 30.0)
+
+    canon = registry.canonical_statuses()
+    assert canon["weather"] == "ONLINE"
+    assert canon["geocoding"] == "ONLINE"
+
+    # Every source down → the group is honestly OFFLINE.
+    for _ in range(3):
+        registry.record_failure("met-norway", "timeout")
+    assert registry.canonical_statuses()["weather"] == "OFFLINE"
+
+
 def test_snapshot_reports_circuit_field():
     for _ in range(3):
         registry.record_failure("osrm", "down")
@@ -169,6 +189,10 @@ def test_weather_serves_stale_cache_when_provider_down():
             weather_service._connector,
             "get_current_weather",
             new=AsyncMock(side_effect=ConnectorError("open-meteo", "HTTP 503")),
+        ), patch.object(
+            weather_service._fallback,
+            "get_current_weather",
+            new=AsyncMock(side_effect=ConnectorError("met-norway", "down")),
         ):
             obs = await weather_service.get_current_weather(22.0, 73.0, allow_stale=True)
         assert obs.from_cache is True
@@ -185,6 +209,10 @@ def test_weather_distinct_no_cache_message():
             weather_service._connector,
             "get_current_weather",
             new=AsyncMock(side_effect=ConnectorError("open-meteo", "HTTP 503")),
+        ), patch.object(
+            weather_service._fallback,
+            "get_current_weather",
+            new=AsyncMock(side_effect=ConnectorError("met-norway", "down")),
         ):
             with pytest.raises(ConnectorError) as ei:
                 await weather_service.get_current_weather(22.0, 73.0, allow_stale=True)
@@ -205,11 +233,188 @@ def test_weather_no_stale_flag_propagates_original_error():
             weather_service._connector,
             "get_current_weather",
             new=AsyncMock(side_effect=ConnectorError("open-meteo", "HTTP 429")),
+        ), patch.object(
+            weather_service._fallback,
+            "get_current_weather",
+            new=AsyncMock(side_effect=ConnectorError("met-norway", "down")),
         ):
             with pytest.raises(ConnectorError) as ei:
                 await weather_service.get_current_weather(22.0, 73.0, allow_stale=False)
         assert "no cached weather" not in ei.value.message
         assert ei.value.message == "HTTP 429"
+
+    run(main())
+
+
+def test_forecast_serves_stale_cache_when_provider_down():
+    stale = {
+        "latitude": 22.0,
+        "longitude": 73.0,
+        "retrieved_at": "2026-09-25T00:00:00+00:00",
+        "hours": [],
+    }
+
+    def fake_cache_get(key: str):
+        return stale if key.endswith(":latest") else None
+
+    async def main():
+        with patch(
+            "app.integrations.cache.cache_get",
+            new=AsyncMock(side_effect=fake_cache_get),
+        ), patch.object(
+            weather_service._connector,
+            "get_forecast",
+            new=AsyncMock(side_effect=ConnectorError("open-meteo", "HTTP 429")),
+        ), patch.object(
+            weather_service._fallback,
+            "get_forecast",
+            new=AsyncMock(side_effect=ConnectorError("met-norway", "down")),
+        ):
+            fc = await weather_service.get_forecast(22.0, 73.0, hours=6, allow_stale=True)
+        assert fc.from_cache is True
+        assert fc.latitude == 22.0
+
+    run(main())
+
+
+def test_forecast_distinct_no_cache_message():
+    async def main():
+        with patch(
+            "app.integrations.cache.cache_get", new=AsyncMock(return_value=None)
+        ), patch.object(
+            weather_service._connector,
+            "get_forecast",
+            new=AsyncMock(side_effect=ConnectorError("open-meteo", "HTTP 429")),
+        ), patch.object(
+            weather_service._fallback,
+            "get_forecast",
+            new=AsyncMock(side_effect=ConnectorError("met-norway", "down")),
+        ):
+            with pytest.raises(ConnectorError) as ei:
+                await weather_service.get_forecast(22.0, 73.0, hours=6, allow_stale=True)
+        assert "no cached forecast" in ei.value.message
+        assert "fabricated" in ei.value.message
+        assert ei.value.provider == "open-meteo"
+
+    run(main())
+
+
+def test_forecast_no_stale_flag_propagates_original_error():
+    async def main():
+        with patch(
+            "app.integrations.cache.cache_get", new=AsyncMock(return_value=None)
+        ), patch.object(
+            weather_service._connector,
+            "get_forecast",
+            new=AsyncMock(side_effect=ConnectorError("open-meteo", "HTTP 429")),
+        ), patch.object(
+            weather_service._fallback,
+            "get_forecast",
+            new=AsyncMock(side_effect=ConnectorError("met-norway", "down")),
+        ):
+            with pytest.raises(ConnectorError) as ei:
+                await weather_service.get_forecast(22.0, 73.0, hours=6, allow_stale=False)
+        assert "no cached forecast" not in ei.value.message
+        assert ei.value.message == "HTTP 429"
+
+    run(main())
+
+
+# ── Fallback sources: primary down → secondary serves real data (§31) ─────────
+
+def test_weather_falls_back_to_met_norway_when_primary_down():
+    fallback_obs = WeatherObservation(
+        source="met-norway", observation_type="weather",
+        latitude=22.0, longitude=73.0,
+        timestamp=datetime.now(timezone.utc),
+        rainfall_mm_hr=0.7, temperature_c=29.0,
+        wind_speed_kmh=14.4, weather_main="Rain",
+        weather_description="Moderate rain",
+    )
+
+    async def main():
+        with patch(
+            "app.integrations.cache.cache_get", new=AsyncMock(return_value=None)
+        ), patch(
+            "app.integrations.cache.cache_set", new=AsyncMock()
+        ), patch.object(
+            weather_service._connector,
+            "get_current_weather",
+            new=AsyncMock(side_effect=ConnectorError("open-meteo", "HTTP 429")),
+        ), patch.object(
+            weather_service._fallback,
+            "get_current_weather",
+            new=AsyncMock(return_value=fallback_obs),
+        ):
+            obs = await weather_service.get_current_weather(
+                22.0, 73.0, allow_stale=False
+            )
+        # Live fallback data is allowed even with allow_stale=False —
+        # it is a fresh fetch from a secondary source, not a cached value.
+        assert obs.source == "met-norway"
+        assert obs.rainfall_mm_hr == 0.7
+        assert obs.from_cache is False
+
+    run(main())
+
+
+def test_forecast_falls_back_to_met_norway_when_primary_down():
+    fallback_fc = ForecastResult(
+        source="met-norway", observation_type="forecast",
+        latitude=22.0, longitude=73.0,
+        retrieved_at=datetime.now(timezone.utc),
+        hours=[ForecastSlice(time="2026-09-25T15:00:00+00:00",
+                             precipitation_mm=1.2, temperature_c=28.0)],
+    )
+
+    async def main():
+        with patch(
+            "app.integrations.cache.cache_get", new=AsyncMock(return_value=None)
+        ), patch(
+            "app.integrations.cache.cache_set", new=AsyncMock()
+        ), patch.object(
+            weather_service._connector,
+            "get_forecast",
+            new=AsyncMock(side_effect=ConnectorError("open-meteo", "HTTP 429")),
+        ), patch.object(
+            weather_service._fallback,
+            "get_forecast",
+            new=AsyncMock(return_value=fallback_fc),
+        ):
+            fc = await weather_service.get_forecast(
+                22.0, 73.0, hours=6, allow_stale=False
+            )
+        assert fc.source == "met-norway"
+        assert fc.hours[0].precipitation_mm == 1.2
+        assert fc.from_cache is False
+
+    run(main())
+
+
+def test_geocode_falls_back_to_photon_when_nominatim_down():
+    photon_candidates = [{
+        "lat": 22.3119, "lng": 73.1812,
+        "display_name": "Vadodara, Gujarat, India",
+        "confidence": 0.5, "osm_type": "N", "osm_id": 2022807192,
+        "category": "place", "type": "city",
+    }]
+
+    async def main():
+        with patch(
+            "app.integrations.cache.cache_get", new=AsyncMock(return_value=None)
+        ), patch(
+            "app.integrations.cache.cache_set", new=AsyncMock()
+        ), patch(
+            "app.services.geocoding.NominatimConnector.search",
+            new=AsyncMock(side_effect=ConnectorError("nominatim", "blocked")),
+        ), patch(
+            "app.services.geocoding.PhotonConnector.search",
+            new=AsyncMock(return_value=photon_candidates),
+        ):
+            out = await geocode("Vadodara, India")
+        assert out is not None
+        assert out["lat"] == 22.3119
+        assert out["display_name"] == "Vadodara, Gujarat, India"
 
     run(main())
 
@@ -225,6 +430,9 @@ def test_geocode_returns_none_when_provider_down():
         ), patch(
             "app.services.geocoding.NominatimConnector.search",
             new=AsyncMock(side_effect=ConnectorError("nominatim", "timeout")),
+        ), patch(
+            "app.services.geocoding.PhotonConnector.search",
+            new=AsyncMock(side_effect=ConnectorError("photon", "timeout")),
         ):
             out = await geocode("Somewhereville, Nowhere")
         assert out is None   # never invented coordinates

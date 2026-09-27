@@ -121,19 +121,19 @@ def test_login_validation(client: TestClient):
     assert r.status_code == 422
 
 
-def test_incidents_requires_auth(client: TestClient):
+def test_incidents_public(client: TestClient):
     r = client.get("/api/incidents")
-    assert r.status_code == 401
+    assert r.status_code == 200
 
 
-def test_zones_requires_auth(client: TestClient):
+def test_zones_public(client: TestClient):
     r = client.get("/api/zones")
-    assert r.status_code == 401
+    assert r.status_code == 200
 
 
-def test_resources_requires_auth(client: TestClient):
+def test_resources_public(client: TestClient):
     r = client.get("/api/resources")
-    assert r.status_code == 401
+    assert r.status_code == 200
 
 
 def test_command_health_public(client: TestClient):
@@ -144,17 +144,18 @@ def test_command_health_public(client: TestClient):
     assert "gsk_" not in r.text
 
 
-def test_approval_queue_requires_auth(client: TestClient):
+def test_approval_queue_public(client: TestClient):
     r = client.get("/api/command/approval-queue")
-    assert r.status_code == 401
+    assert r.status_code == 200
 
 
-def test_invalid_token_rejected(client: TestClient):
+def test_invalid_token_ignored(client: TestClient):
+    # Public demo mode: bearer tokens are not required or validated.
     r = client.get(
         "/api/incidents",
         headers={"Authorization": "Bearer not-a-real-token"},
     )
-    assert r.status_code == 401
+    assert r.status_code == 200
 
 
 # ── Phase 17 — exact §41 endpoint contract ──────────────────────────────────
@@ -235,9 +236,10 @@ def test_contract_exact_endpoint_set(client: TestClient):
     assert live == set(CONTRACT_ENDPOINTS)
 
 
-def test_command_query_requires_auth(client: TestClient):
+def test_command_query_validation_without_token(client: TestClient):
+    # Public demo: body validation is reached without any auth.
     r = client.post("/api/command/query", json={})
-    assert r.status_code == 401
+    assert r.status_code == 422
 
 
 def test_heatmaps_priority(client: TestClient):

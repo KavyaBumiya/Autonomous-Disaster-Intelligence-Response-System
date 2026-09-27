@@ -28,8 +28,8 @@ import {
   PriorityBadge,
 } from "@/components/ui";
 
-const OperationalMap = lazy(() =>
-  import("@/components/OperationalMap").then((m) => ({ default: m.OperationalMap }))
+const CesiumGlobe = lazy(() =>
+  import("@/components/CesiumGlobe").then((m) => ({ default: m.CesiumGlobe }))
 );
 
 type DetailTab = "overview" | "evidence" | "prediction" | "resources" | "route" | "audit";
@@ -335,7 +335,7 @@ export const IncidentDetail: React.FC = () => {
         <div className="ops-panel overflow-hidden">
           <div className="ops-panel-header">
             <div>
-              <div className="ops-kicker">Live map</div>
+              <div className="ops-kicker">3D Globe</div>
               <div className="ops-title">Incident geospatial view</div>
             </div>
             <span className="ops-mono text-xs text-slate-400">
@@ -343,9 +343,8 @@ export const IncidentDetail: React.FC = () => {
             </span>
           </div>
           <Suspense fallback={<MapFallback />}>
-            <OperationalMap
+            <CesiumGlobe
               zones={zones}
-              selectedZone={zoneId}
               onSelectZone={(id) => navigate(`/dashboard/${id}`)}
               height="clamp(280px, 36vh, 420px)"
             />

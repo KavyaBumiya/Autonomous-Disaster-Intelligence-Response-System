@@ -1,33 +1,28 @@
-"""FastAPI dependencies for role-based access control."""
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+"""FastAPI auth dependencies — public demo mode.
 
-from app.auth.jwt import decode_token
+Sign-in was removed for the public demo (2026-09): every guarded route runs
+as a fixed operator identity instead of rejecting anonymous requests with
+401/403. The /api/auth/login and /api/auth/me endpoints remain part of the
+frozen §41 API contract (login still issues real JWTs for API clients), but
+no route requires a bearer token anymore — an Authorization header, valid or
+not, is ignored.
+"""
+from fastapi import Depends
 
-bearer_scheme = HTTPBearer(auto_error=False)
-
-
-def _get_token_payload(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-) -> dict:
-    if not credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    payload = decode_token(credentials.credentials)
-    if not payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-    return payload
+# Fixed demo identity: "commander" passes every historical require_role list.
+DEMO_USER: dict[str, str] = {"user_id": "demo-operator", "role": "commander"}
 
 
-def get_current_user(payload: dict = Depends(_get_token_payload)) -> dict:
-    return {"user_id": payload["sub"], "role": payload["role"]}
+def get_current_user() -> dict:
+    """Public demo: every caller is the demo operator (never 401)."""
+    return dict(DEMO_USER)
 
 
 def require_role(allowed_roles: list[str]):
+    """Role gate retained for route signatures — open in public demo mode."""
+    del allowed_roles  # roles are not enforced without sign-in
+
     def _checker(user: dict = Depends(get_current_user)) -> dict:
-        if user["role"] not in allowed_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Role '{user['role']}' is not permitted for this action.",
-            )
         return user
+
     return _checker

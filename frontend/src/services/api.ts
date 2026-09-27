@@ -1,7 +1,11 @@
 /**
  * AEGIS-AI — API service layer
  * ================================
- * Axios instance with auth interceptor + typed API modules.
+ * Axios instance + typed API modules.
+ *
+ * Public demo mode (2026-09): sign-in was removed. The backend serves every
+ * route without a token, so the frontend attaches no Authorization header
+ * and performs no auth bootstrap before first paint.
  *
  * SECURITY NOTE (PRD §3 / §23):
  *   - The GROQ_API_KEY lives only on the backend server.
@@ -14,7 +18,7 @@
  *   - VITE_API_BASE_URL can override when frontend/backend are on different
  *     origins.
  */
-import axios, { AxiosError } from "axios";
+import axios, { type AxiosError } from "axios";
 
 // ── Axios instance ────────────────────────────────────────────────────────
 
@@ -24,98 +28,7 @@ const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-const TOKEN_KEY = "aegis_token";
-const ROLE_KEY = "aegis_role";
-
-type AuthListener = (authenticated: boolean) => void;
-const authListeners = new Set<AuthListener>();
-
-/** Subscribe to login/logout so health store can update AUTH status. */
-export function onAuthChange(fn: AuthListener): () => void {
-  authListeners.add(fn);
-  return () => authListeners.delete(fn);
-}
-
-function notifyAuthChange(authenticated: boolean): void {
-  authListeners.forEach((fn) => fn(authenticated));
-}
-
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function getRole(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(ROLE_KEY);
-}
-
-export function setAuth(token: string, role: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(ROLE_KEY, role);
-  notifyAuthChange(true);
-}
-
-export function clearAuth(): void {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(ROLE_KEY);
-  notifyAuthChange(false);
-}
-
-// Attach JWT from localStorage on every request
-api.interceptors.request.use(
-  (config) => {
-    const token = getToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (err) => Promise.reject(err),
-);
-
-// On 401, clear stale token so bootstrap can re-login
-api.interceptors.response.use(
-  (res) => res,
-  (err: AxiosError) => {
-    if (err.response?.status === 401) {
-      clearAuth();
-    }
-    return Promise.reject(err);
-  },
-);
-
 export default api;
-
-// ── Auth ──────────────────────────────────────────────────────────────────
-
-export interface LoginResponse {
-  access_token: string;
-  token_type: string;
-  role: string;
-  expires_in: number;
-}
-
-export const authApi = {
-  login: (username: string, password: string) =>
-    api.post<LoginResponse>("/api/auth/login", { username, password }),
-
-  me: () => api.get<{ user_id: string; role: string }>("/api/auth/me"),
-};
-
-/**
- * Ensure a valid JWT exists. Called once at app bootstrap.
- * Uses demo commander credentials (seeded by backend/seed.py).
- */
-export async function ensureAuth(): Promise<void> {
-  if (getToken()) return;
-  try {
-    const res = await authApi.login("commander@aegis.demo", "demo123");
-    setAuth(res.data.access_token, res.data.role);
-  } catch (err) {
-    console.error("Auth bootstrap failed (is the backend up?)", err);
-  }
-}
 
 // ── Shared types ──────────────────────────────────────────────────────────
 
@@ -520,6 +433,63 @@ export const actionsApi = {
     status: "approved" | "rejected",
     note?: string,
   ) => api.patch(`/api/actions/${action_id}`, { status, note }),
+};
+
+// ── Google Maps APIs ──────────────────────────────────────────────────────
+
+export const mapsApi = {
+  geocode: (address: string) =>
+    api.get("/api/maps/geocode", { params: { address } }),
+
+  reverseGeocode: (lat: number, lng: number) =>
+    api.get("/api/maps/reverse-geocode", { params: { lat, lng } }),
+
+  placesNearby: (lat: number, lng: number, radius = 500, keyword?: string, placeType?: string) =>
+    api.get("/api/maps/places", { params: { lat, lng, radius, keyword, place_type: placeType } }),
+};
+
+// ── OpenAI APIs ───────────────────────────────────────────────────────────
+
+export const openaiApi = {
+  analyzeDisaster: (context: Record<string, unknown>, analysisType = "situational_awareness") =>
+    api.post("/api/openai/analyze-disaster", { context, analysis_type: analysisType }),
+
+  chat: (messages: Array<{ role: string; content: string }>, model = "gpt-4o-mini") =>
+    api.post("/api/openai/chat", { messages, model }),
+};
+
+// ── NASA FIRMS APIs ───────────────────────────────────────────────────────
+
+export const firmsApi = {
+  activeFires: (lat: number, lng: number, radiusKm = 500, days = 7) =>
+    api.get("/api/firms/fires", { params: { lat, lng, radius_km: radiusKm, days } }),
+
+  globalFires: (source = "VIIRS_SNPP_NRT", dayRange = 1) =>
+    api.get("/api/firms/fires/global", { params: { source, day_range: dayRange } }),
+};
+
+// ── TomTom APIs ───────────────────────────────────────────────────────────
+
+export const trafficApi = {
+  route: (originLat: number, originLng: number, destLat: number, destLng: number, traffic = true) =>
+    api.get("/api/traffic/route", { params: { origin_lat: originLat, origin_lng: originLng, dest_lat: destLat, dest_lng: destLng, traffic } }),
+
+  flow: (lat: number, lng: number, zoom = 10) =>
+    api.get("/api/traffic/flow", { params: { lat, lng, zoom } }),
+
+  search: (q: string, lat?: number, lng?: number, limit = 10) =>
+    api.get("/api/traffic/search", { params: { q, lat, lng, limit } }),
+};
+
+// ── Cesium Ion APIs ──────────────────────────────────────────────────────
+
+export const globeApi = {
+  token: () => api.get<{ accessToken: string; assetId: number | null }>("/api/globe/token"),
+
+  asset: (assetId: number) => api.get(`/api/globe/assets/${assetId}`),
+
+  assets: (assetType = "IMAGERY") =>
+    api.get("/api/globe/assets", { params: { asset_type: assetType } }),
 };
 
 // ── Utility ───────────────────────────────────────────────────────────────
