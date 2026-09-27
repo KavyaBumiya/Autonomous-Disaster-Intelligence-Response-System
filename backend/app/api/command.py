@@ -87,6 +87,7 @@ class CommandResponseModel(BaseModel):
     execution_time:    float                  = 0.0
     model_used:        str                    = ""
     ai_available:      bool                   = False
+    ai_configured:     bool                   = False
     ai_call_id:        str                    = ""
     conversation_id:   str | None             = None
 
@@ -177,6 +178,7 @@ async def command_query(
                 f"Error detail: {str(exc)[:120]}"
             ),
             model_used="error-fallback",
+            ai_used=False,
         )
 
     # Persist this exchange for follow-up questions
@@ -193,7 +195,8 @@ async def command_query(
         user_id=current_user.get("user_id"),
         role=current_user.get("role"),
         tools_called=[fc.get("name") for fc in result.function_calls],
-        ai_available=ai_gateway.available,
+        ai_available=result.ai_used,
+        ai_configured=ai_gateway.available,
         conversation_id=request.conversation_id,
         history_turns=len(conversation_history),
         elapsed_s=round(elapsed, 2),
@@ -208,7 +211,11 @@ async def command_query(
         execution_results=result.execution_results,
         execution_time=result.execution_time or elapsed,
         model_used=result.model_used,
-        ai_available=ai_gateway.available,
+        # Truthful per request: the AI produced this reply or it did not. A
+        # configured key alone is reported separately as ai_configured, which
+        # mirrors the split already exposed by GET /api/command/health.
+        ai_available=result.ai_used,
+        ai_configured=ai_gateway.available,
         ai_call_id=result.ai_call_id,
         conversation_id=request.conversation_id,
     )

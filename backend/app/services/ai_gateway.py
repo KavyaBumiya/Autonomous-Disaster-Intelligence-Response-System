@@ -185,6 +185,14 @@ class CommandQueryResponse(BaseModel):
     execution_time: float = 0.0
     model_used: str = ""
     ai_call_id: str = ""
+    ai_used: bool = True
+    """
+    True only when the NIM model actually produced `response`.
+
+    A configured key is not a working one, so a request that falls back to the
+    deterministic reply must report False rather than letting callers infer
+    success from `model_used`.
+    """
 
 
 class ModerationVerdict(BaseModel):
@@ -563,6 +571,7 @@ class AIGateway:
                 response=_offline_response(user_query),
                 model_used="offline-fallback",
                 ai_call_id="offline",
+                ai_used=False,
             )
 
         model   = route_model(TaskType.COMMAND_QUERY, model_override)
@@ -595,10 +604,14 @@ class AIGateway:
             log.error   = str(exc)
             _log_call(log)
             logger.warning("nvidia_command_query_failed — using offline fallback", error=str(exc))
+            # The key is present but the call did not succeed (bad key, network,
+            # rate limit). Report the fallback honestly instead of attributing
+            # the deterministic reply to the NIM model that was attempted.
             return CommandQueryResponse(
                 response=_offline_response(user_query),
-                model_used=model,
+                model_used="offline-fallback",
                 ai_call_id=log.call_id,
+                ai_used=False,
             )
 
         log.latency_ms = (time.perf_counter() - t_start) * 1000

@@ -484,6 +484,54 @@ def test_ai_unavailable_returns_offline_fallback():
     run(main())
 
 
+def test_ai_unavailable_reports_ai_used_false():
+    """A missing key must not be reported as a successful AI answer."""
+    async def main():
+        with patch.object(
+            AIGateway, "available", new_callable=PropertyMock, return_value=False
+        ):
+            resp = await ai_gateway.command_query("Which resources are available?")
+        assert resp.ai_used is False
+
+    run(main())
+
+
+def test_ai_call_failure_does_not_claim_the_nim_model():
+    """
+    A configured-but-failing key (401, network, rate limit) previously returned
+    the deterministic reply while still naming the NIM model in `model_used`,
+    so callers could not tell a real answer from a fallback.
+    """
+    async def main():
+        with patch.object(
+            AIGateway, "available", new_callable=PropertyMock, return_value=True
+        ), patch.object(
+            AIGateway,
+            "_call_with_tools",
+            new=AsyncMock(side_effect=RuntimeError("401 Unauthorized")),
+        ):
+            resp = await ai_gateway.command_query("What is the flood risk?")
+        assert resp.ai_used is False
+        assert resp.model_used == "offline-fallback"
+
+    run(main())
+
+
+def test_ai_success_reports_ai_used_true():
+    async def main():
+        with patch.object(
+            AIGateway, "available", new_callable=PropertyMock, return_value=True
+        ), patch.object(
+            AIGateway, "_call_with_tools", new=AsyncMock(return_value="Zone 17 is critical.")
+        ):
+            resp = await ai_gateway.command_query("Which zone is critical?")
+        assert resp.ai_used is True
+        assert resp.model_used != "offline-fallback"
+        assert resp.response == "Zone 17 is critical."
+
+    run(main())
+
+
 def test_ai_call_failure_falls_back_and_records_registry():
     async def main():
         with patch.object(
