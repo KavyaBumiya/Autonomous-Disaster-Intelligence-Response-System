@@ -1,47 +1,74 @@
 """
 AEGIS AI — Gradio Demo Interface (Hugging Face Space)
-Thin UI layer — all logic lives in the FastAPI backend.
+Self-contained: calls the AI layer directly (no separate backend needed).
 """
-import httpx
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 import gradio as gr
+import spaces
+from app.ai.nlp.disaster_nlp import get_disaster_nlp
+from app.ai.providers.base import TaskType
+from app.ai.router.model_router import get_model_router
 
-API_BASE = "http://localhost:8000"
+_nlp = None
+_router = None
 
 
-def analyze_report(text: str) -> str:
+def _get_nlp():
+    global _nlp
+    if _nlp is None:
+        _nlp = get_disaster_nlp()
+    return _nlp
+
+
+def _get_router():
+    global _router
+    if _router is None:
+        _router = get_model_router()
+    return _router
+
+
+async def analyze_report(text: str) -> str:
     try:
-        resp = httpx.post(f"{API_BASE}/api/ai/analyze-report", json={"text": text}, timeout=30)
-        data = resp.json()
-        return f"Hazard: {data.get('hazard_type', 'unknown')}\nConfidence: {data.get('hazard_confidence', 0):.0%}\n{data.get('explanation', '')}"
+        nlp = _get_nlp()
+        result = await nlp.analyze(text)
+        return f"Hazard: {result.get('hazard_type', 'unknown')}\nConfidence: {result.get('hazard_confidence', 0):.0%}\n{result.get('explanation', '')}"
     except Exception as e:
         return f"Error: {e}"
 
 
-def classify_hazard(text: str) -> str:
+async def classify_hazard(text: str) -> str:
     try:
-        resp = httpx.post(f"{API_BASE}/api/ai/classify-hazard", json={"text": text}, timeout=30)
-        data = resp.json()
-        return f"Prediction: {data.get('prediction', 'unknown')}\nConfidence: {data.get('confidence', 0):.0%}\nModel: {data.get('model_id', 'unknown')}"
+        router = _get_router()
+        result = await router.route(TaskType.HAZARD_CLASSIFICATION, text)
+        return f"Prediction: {result.prediction}\nConfidence: {result.confidence:.0%}\nModel: {result.model_id}"
     except Exception as e:
         return f"Error: {e}"
 
 
-def summarize(text: str) -> str:
+async def summarize(text: str) -> str:
     try:
-        resp = httpx.post(f"{API_BASE}/api/ai/summarize", json={"text": text}, timeout=30)
-        data = resp.json()
-        return data.get("prediction", "No summary available")
+        nlp = _get_nlp()
+        result = await nlp.summarize(text)
+        return result.prediction or "No summary available"
     except Exception as e:
         return f"Error: {e}"
 
 
 def check_health() -> str:
     try:
-        resp = httpx.get(f"{API_BASE}/api/ai/health", timeout=10)
-        data = resp.json()
-        return f"Status: {data.get('status', 'unknown')}\nModels: {data.get('models_registered', 0)}"
+        router = _get_router()
+        return f"Router ready\nProviders: {len(router._providers)}"
     except Exception as e:
-        return f"Backend unreachable: {e}"
+        return f"Error: {e}"
+
+
+@spaces.GPU
+def warmup():
+    return "ready"
 
 
 with gr.Blocks(title="AEGIS AI — Disaster Intelligence") as demo:

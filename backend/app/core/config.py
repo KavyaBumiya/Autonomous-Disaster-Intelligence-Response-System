@@ -158,6 +158,15 @@ class Settings(BaseSettings):
     nlp_model_path:    str = "models/nlp/v1"
     nlp_model_version: str = "v1_distilbert"
 
+    # ── Hugging Face ──────────────────────────────────────────────────────
+    # HUGGINGFACE_TOKEN: HF Hub API token for remote inference. Server-side only.
+    # When empty, HF provider reports OFFLINE — no fabrication, graceful degradation.
+    huggingface_token: str = ""
+    huggingface_api_base: str = "https://huggingface.co"
+    huggingface_timeout_seconds: float = 30.0
+    # Comma-separated model ids to preload at startup (empty = lazy-load on first use)
+    huggingface_preload_models: str = ""
+
     # ── App / media ───────────────────────────────────────────────────────
     demo_scenario: str = "vadodara_flood"
     media_dir:     str = "media/audio"

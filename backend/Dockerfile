@@ -26,7 +26,18 @@ COPY . .
 # Create media directory for audio uploads
 RUN mkdir -p /app/media/audio
 
+# Create non-root user for security
+RUN useradd -m -r aegis && chown -R aegis:aegis /app
+USER aegis
+
 ENV PORT=8000
 EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
+
+# Graceful shutdown handling
+STOPSIGNAL SIGTERM
 
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:socket_app --host 0.0.0.0 --port ${PORT}"]
