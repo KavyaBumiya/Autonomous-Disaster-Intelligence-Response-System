@@ -11,7 +11,7 @@ import { ApiError, api } from "./api";
 import { PINNED_ZONE_ID, POLL_INTERVAL_MS } from "./config";
 import { hasData } from "./format";
 import { pickPrimaryZone } from "./mappers";
-import { subscribeLiveFeed, type SocketEvent } from "./socket";
+import { subscribeLiveFeed, onLiveFeedStatusChange, type LiveFeedStatus, type SocketEvent } from "./socket";
 import type {
   ApprovalQueueResponse,
   AvailableResourcesResponse,
@@ -138,6 +138,22 @@ export function useLiveRefresh(resources: Array<{ refresh: () => void }>): void 
 }
 
 // ── Domain hooks ─────────────────────────────────────────────────────────
+
+/**
+ * Track the live channel's real connection state.
+ *
+ * Polling keeps the console populated even while the socket is down, so REST
+ * health alone cannot distinguish "stream is fine" from "stream is silently
+ * gone". The health badge reads this so it cannot report a healthy stream while
+ * the WebSocket is actually down.
+ */
+export function useLiveFeedStatus(): LiveFeedStatus {
+  const [status, setStatusState] = useState<LiveFeedStatus>("connecting");
+
+  useEffect(() => onLiveFeedStatusChange(setStatusState), []);
+
+  return status;
+}
 
 export function useHealth() {
   return useApiResource<HealthResponse>((signal) => api.health(signal), "health", {

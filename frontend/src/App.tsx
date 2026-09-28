@@ -124,7 +124,7 @@ function Console() {
           <div className="flex rounded-xl border border-line bg-slate-950/50 p-1">
             {(["Command","Rescue","NGO"] as Role[]).map(r => <button key={r} onClick={() => setRole(r)} className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${role === r ? "bg-cyan/10 text-cyan" : "text-slate-500 hover:text-slate-200"}`}>{r}</button>)}
           </div>
-          <span className="chip"><Radio size={12} className="text-success"/> {data.feedHealth.statusLabel}</span>
+          <span className="chip"><Radio size={12} className={data.feedHealth.isStreamNominal ? "text-success" : data.feedHealth.isNominal ? "text-amber" : "text-danger"}/> {data.feedHealth.statusLabel}</span>
           <button onClick={() => setNotifOpen(!notifOpen)} className="icon-btn"><Bell size={17}/></button>
           <div className="ml-1 flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-bold">OC</div>
         </div>
@@ -175,7 +175,7 @@ function Console() {
             })}
           </nav>
           <div className="absolute bottom-4 left-3 right-3 rounded-xl border border-line bg-slate-950/40 p-3">
-            <div className="flex items-center gap-2 text-xs font-semibold"><div className="h-2 w-2 rounded-full bg-success"/><span>{data.feedHealth.systemLabel}</span></div>
+            <div className="flex items-center gap-2 text-xs font-semibold"><div className={`h-2 w-2 rounded-full ${data.feedHealth.isNominal ? "bg-success" : "bg-danger"}`}/><span>{data.feedHealth.systemLabel}</span></div>
             <p className="mt-1 text-[10px] text-slate-500">Last sync {data.freshness} ago · {data.feedHealth.sourceCount} sources</p>
           </div>
         </aside>

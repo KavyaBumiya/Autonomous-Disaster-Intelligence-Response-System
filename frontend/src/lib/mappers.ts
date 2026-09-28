@@ -12,6 +12,10 @@
  *  - Every mapper degrades to a declared fallback rather than emitting NaN,
  *    null or an empty panel when the backend is slow, empty or unreachable.
  */
+// Type-only import: erased at compile time, so the mapper bundle does not
+// pull in socket.io-client just to name the status union.
+import type { LiveFeedStatus } from "./socket";
+
 import {
   ageShort,
   clamp,
@@ -798,14 +802,28 @@ export interface FeedHealth {
   sourceCount: number;
   healthyFeeds: number;
   isNominal: boolean;
+  /** True only when the REST API *and* the live socket are both nominal. */
+  isStreamNominal: boolean;
 }
 
-/** Derive the header/sidebar liveness indicators from GET /api/health. */
-export function toFeedHealth(health: {
-  status?: string;
-  providers?: Record<string, { status?: string }>;
-  services?: Record<string, string>;
-} | null): FeedHealth {
+/**
+ * Derive the header/sidebar liveness indicators from GET /api/health plus the
+ * live socket state.
+ *
+ * `liveFeedStatus` is required for the stream verdict: REST polling succeeds
+ * while the WebSocket is down, so trusting the health payload alone would report
+ * "Data stream healthy" during exactly the outage an operator needs flagged.
+ * `systemLabel` stays REST-derived — it describes the backend's own health, which
+ * is independent of whether the console is streaming from it.
+ */
+export function toFeedHealth(
+  health: {
+    status?: string;
+    providers?: Record<string, { status?: string }>;
+    services?: Record<string, string>;
+  } | null,
+  liveFeedStatus: LiveFeedStatus = "connecting",
+): FeedHealth {
   if (!health) {
     return {
       statusLabel: "Backend unreachable",
@@ -814,6 +832,7 @@ export function toFeedHealth(health: {
       sourceCount: 0,
       healthyFeeds: 0,
       isNominal: false,
+      isStreamNominal: false,
     };
   }
 
@@ -823,14 +842,27 @@ export function toFeedHealth(health: {
   const canonical = entries.filter((p) => (p as { canonical?: boolean }).canonical).length;
   const services = health.services ?? {};
   const isNominal = health.status === "ok" && services.database === "ONLINE";
+  const isStreamNominal = isNominal && liveFeedStatus === "connected";
+
+  // Only an established socket earns the word "healthy". A pending handshake is
+  // reported as connecting rather than degraded, so a normal page load does not
+  // flash a false outage.
+  const statusLabel = !isNominal
+    ? "Data stream degraded"
+    : liveFeedStatus === "connected"
+      ? "Data stream healthy"
+      : liveFeedStatus === "connecting"
+        ? "Data stream connecting"
+        : "Live feed offline";
 
   return {
-    statusLabel: isNominal ? "Data stream healthy" : "Data stream degraded",
+    statusLabel,
     streamLabel: `${healthy} live feeds`,
     systemLabel: isNominal ? "System nominal" : "System degraded",
     sourceCount: canonical || entries.length,
     healthyFeeds: healthy,
     isNominal,
+    isStreamNominal,
   };
 }
 

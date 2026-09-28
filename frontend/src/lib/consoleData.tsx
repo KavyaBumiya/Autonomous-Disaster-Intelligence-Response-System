@@ -67,6 +67,7 @@ import {
   useCommandHealth,
   useHealth,
   useIncidents,
+  useLiveFeedStatus,
   useLiveRefresh,
   usePredictions,
   usePrimaryZoneId,
@@ -184,6 +185,9 @@ export function ConsoleDataProvider({
   const predictions = usePredictions(zoneId);
   const routes = useRoutes(zoneId);
   const zoneNames = useZoneNames(zones.data);
+  // Real socket state, so the health badge reflects the live channel rather than
+  // just the REST poll that keeps working while the socket is down.
+  const liveFeedStatus = useLiveFeedStatus();
 
   useLiveRefresh([
     health, commandHealth, zones, incidents, resources, reports,
@@ -367,7 +371,10 @@ export function ConsoleDataProvider({
     return pins ?? [];
   }, [zone, incidents.data, incidents.error, resources.data, resources.error, predictions.data]);
 
-  const feedHealth = useMemo(() => toFeedHealth(health.data), [health.data]);
+  const feedHealth = useMemo(
+    () => toFeedHealth(health.data, liveFeedStatus),
+    [health.data, liveFeedStatus],
+  );
 
   const freshness = useMemo(() => {
     const stamps = [incidents.lastUpdatedAt, resources.lastUpdatedAt, predictions.lastUpdatedAt]

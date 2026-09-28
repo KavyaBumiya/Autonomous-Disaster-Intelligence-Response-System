@@ -50,7 +50,7 @@ services:
       redis:
         condition: service_healthy
     command: >
-      sh -c "alembic upgrade head && python seed.py && uvicorn app.main:socket_app --host 0.0.0.0 --port 8000"
+      sh -c "alembic upgrade head && uvicorn app.main:socket_app --host 0.0.0.0 --port 8000"
 
   # The operator UI is built and hosted separately, so there is no frontend
   # service here. It talks to this API over HTTP/WebSocket; set FRONTEND_ORIGIN

@@ -8,7 +8,9 @@
  * This module is intentionally connection-failure tolerant: the operator console
  * must keep working when the socket is unavailable, so the REST poll in
  * `hooks.ts` remains the source of truth and the socket is only used to trigger
- * a refresh. A dropped socket never surfaces an error to the UI.
+ * a refresh. A dropped socket never surfaces an error to the UI — it is reported
+ * through `LiveFeedStatus` instead, so the health badge can never claim the
+ * stream is healthy while the socket is actually down.
  */
 import { io, type Socket } from "socket.io-client";
 import { socketUrl } from "./config";
@@ -35,6 +37,42 @@ let socket: Socket | null = null;
 let consumerCount = 0;
 
 /**
+ * Live-channel state, reported separately from connection errors so the UI can
+ * distinguish "still dialling" from "gave up".
+ */
+export type LiveFeedStatus = "connecting" | "connected" | "disconnected";
+
+/**
+ * Starts as "connecting": the console subscribes on mount, so the initial
+ * handshake is normally in flight. An actual failure flips this to
+ * "disconnected" via the `connect_error` handler below.
+ */
+let status: LiveFeedStatus = "connecting";
+const statusListeners = new Set<(next: LiveFeedStatus) => void>();
+
+function setStatus(next: LiveFeedStatus): void {
+  if (status === next) return;
+  status = next;
+  for (const listener of statusListeners) listener(next);
+}
+
+/**
+ * Observe live-channel state changes.
+ *
+ * The listener is invoked immediately with the current status so a caller never
+ * renders a stale value, and the returned function unsubscribes it.
+ */
+export function onLiveFeedStatusChange(
+  listener: (next: LiveFeedStatus) => void,
+): () => void {
+  statusListeners.add(listener);
+  listener(status);
+  return () => {
+    statusListeners.delete(listener);
+  };
+}
+
+/**
  * Lazily create the shared socket.
  *
  * `autoConnect` is off so a headless or offline environment never throws during
@@ -59,8 +97,11 @@ function getSocket(): Socket {
   });
 
   // The server accepts an unauthenticated handshake and routes the client into
-  // the global feed room. Errors are swallowed by design (see module docstring).
-  socket.on("connect_error", () => undefined);
+  // the global feed room. Errors are swallowed by design (see module docstring),
+  // but the resulting state is published so the health badge stays honest.
+  socket.on("connect", () => setStatus("connected"));
+  socket.on("disconnect", () => setStatus("disconnected"));
+  socket.on("connect_error", () => setStatus("disconnected"));
 
   return socket;
 }
@@ -85,7 +126,10 @@ export function subscribeLiveFeed(
     return { event, listener };
   });
 
-  if (!client.connected) client.connect();
+  if (!client.connected) {
+    setStatus("connecting");
+    client.connect();
+  }
   client.emit("subscribe", { room: "global_feed" });
 
   return () => {
@@ -95,8 +139,11 @@ export function subscribeLiveFeed(
     // Keep the socket alive only while something is listening; React StrictMode
     // mounts effects twice in development, so closing eagerly would thrash.
     if (consumerCount <= 0) {
-      client.removeAllListeners();
+      // Only the per-subscriber listeners are dropped here. A blanket
+      // removeAllListeners() would also strip the connect/disconnect handlers
+      // that publish LiveFeedStatus, leaving the badge frozen on its last value.
       client.disconnect();
+      setStatus("disconnected");
     }
   };
 }
