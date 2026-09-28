@@ -9,9 +9,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import gradio as gr
 import spaces
+import socketio
 from app.ai.nlp.disaster_nlp import get_disaster_nlp
 from app.ai.providers.base import TaskType
 from app.ai.router.model_router import get_model_router
+from app.main import app as fastapi_app
+from app.services.websocket import sio
 
 _nlp = None
 _router = None
@@ -91,6 +94,12 @@ with gr.Blocks(title="AEGIS AI — Disaster Intelligence") as demo:
         summary_input = gr.Textbox(lines=8, label="Long Report")
         summary_output = gr.Textbox(label="Summary")
         gr.Button("Summarize").click(summarize, inputs=summary_input, outputs=summary_output)
+
+gradio_fastapi = demo.app
+for route in fastapi_app.routes:
+    gradio_fastapi.router.routes.append(route)
+
+demo._app = socketio.ASGIApp(sio, other_asgi_app=gradio_fastapi)
 
 if __name__ == "__main__":
     demo.launch()
