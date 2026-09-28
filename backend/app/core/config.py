@@ -141,6 +141,7 @@ class Settings(BaseSettings):
     evidence_factor_weight: float = 0.0
 
     # ── Social media polling ──────────────────────────────────────────────
+    social_enabled:               bool = True
     social_hashtags:              str = "#flood,#earthquake,#cyclone,#fire,#disaster,#SOS,#rescue"
     social_poll_interval_seconds: int = 60
     social_provider:              str = "twitter"   # "twitter" | "mastodon"
@@ -171,6 +172,17 @@ class Settings(BaseSettings):
             return ["*"]
         origins = [o.strip() for o in raw.split(",") if o.strip()]
         return origins or ["*"]
+
+    @property
+    def cors_allow_credentials(self) -> bool:
+        """Credentialed CORS is only valid against explicit origins.
+
+        The CORS spec forbids combining a wildcard `Access-Control-Allow-Origin`
+        with credentials, so cookies/auth are enabled only once FRONTEND_ORIGIN
+        names real origins. The public demo uses bearer tokens, which travel in
+        the Authorization header and work fine under a wildcard origin.
+        """
+        return "*" not in self.cors_origins
 
     @property
     def social_hashtag_list(self) -> list[str]:

@@ -26,9 +26,12 @@ def _anon_reporter_id(post_id: str) -> str:
 
 # ── Twitter ───────────────────────────────────────────────────
 
+_PLACEHOLDER_TOKENS = {"", "your_twitter_bearer_token_here", "your_token_here", "changeme", "change_me"}
+
+
 async def _fetch_twitter(hashtag: str) -> list[dict]:
     """Fetch recent tweets for a hashtag using Twitter API v2."""
-    if not settings.twitter_bearer_token:
+    if settings.twitter_bearer_token.strip().lower() in _PLACEHOLDER_TOKENS:
         return []
     try:
         import tweepy

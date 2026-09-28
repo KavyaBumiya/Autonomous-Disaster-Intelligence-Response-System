@@ -8,12 +8,16 @@ from datetime import datetime, timezone
 import socketio
 import structlog
 
+from app.core.config import get_settings
+
 logger = structlog.get_logger()
 
-# Async Socket.IO server with CORS open for demo
+# Async Socket.IO server. Origins mirror the REST CORS policy so the console can
+# be deployed on a different host than the API: FRONTEND_ORIGIN (comma-separated)
+# restricts both, and an empty value keeps the permissive local-demo default.
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins="*",
+    cors_allowed_origins=get_settings().cors_origins,
     logger=False,
     engineio_logger=False,
 )

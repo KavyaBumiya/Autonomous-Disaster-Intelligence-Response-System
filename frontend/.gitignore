@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Local env files (keep the template)
+.env
+.env.local
+.env.*.local
+
+# TypeScript build info and emitted config
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Smoke-test artefacts
+smoke/.page.cjs
+smoke/*.mjs.bak

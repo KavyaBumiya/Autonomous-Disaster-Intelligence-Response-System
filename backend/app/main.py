@@ -243,8 +243,13 @@ def _enable_head_on_get_routes(routes) -> None:
 app.add_middleware(
     CORSMiddleware,
     # FRONTEND_ORIGIN env (comma-separated). Empty = ["*"] for local demo.
+    # Set it to the console's deployed origin(s) to lock cross-origin access
+    # down to your own frontend.
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    # Only with explicit origins: a wildcard origin cannot legally be combined
+    # with credentials. The demo authenticates with bearer tokens, so a wildcard
+    # origin still works for it.
+    allow_credentials=settings.cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
