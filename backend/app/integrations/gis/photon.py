@@ -18,7 +18,7 @@ from typing import Any
 import structlog
 
 from app.core.config import get_settings
-from app.integrations.base import BaseConnector, ConnectorError
+from app.integrations.base import BaseConnector
 
 logger = structlog.get_logger()
 

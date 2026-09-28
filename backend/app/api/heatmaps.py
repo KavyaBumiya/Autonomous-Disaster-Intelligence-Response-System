@@ -14,14 +14,13 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func, text
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.incident import Incident
 from app.models.report import Report
 from app.models.zone import Zone
-from app.models.user import User
 
 
 router = APIRouter(prefix="/api/heatmaps", tags=["heatmaps"])

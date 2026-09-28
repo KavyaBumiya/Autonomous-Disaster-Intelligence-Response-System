@@ -23,6 +23,7 @@ async def start_scheduler() -> None:
     from app.pollers.weather import poll_weather  # type: ignore
     from app.pollers.seismic import poll_seismic  # type: ignore
     from app.pollers.eonet import poll_eonet  # type: ignore
+    from app.pollers.social import poll_social  # type: ignore
 
     _scheduler.add_job(
         poll_weather,

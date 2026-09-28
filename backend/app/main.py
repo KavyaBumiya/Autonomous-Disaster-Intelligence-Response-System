@@ -21,7 +21,7 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, Base, engine
 from app.services.websocket import sio
 from app.pollers.scheduler import start_scheduler, stop_scheduler
-from app.api import reports, incidents, zones, actions, auth, resources, predictions, command, phase2, heatmaps, routes, earthquakes, weather, nasa, maps, openai, firms, traffic, globe, ai, decision
+from app.api import reports, incidents, zones, actions, resources, predictions, command, phase2, heatmaps, routes, earthquakes, weather, nasa, maps, openai, firms, traffic, globe, ai, decision
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -284,7 +284,6 @@ async def api_root():
 app.mount("/media", StaticFiles(directory=settings.media_dir, check_dir=False), name="media")
 
 # ── REST routers ─────────────────────────────────────────────
-app.include_router(auth.router,        prefix="/api/auth",        tags=["auth"])
 app.include_router(reports.router,     prefix="/api/reports",     tags=["reports"])
 app.include_router(incidents.router,   prefix="/api/incidents",   tags=["incidents"])
 app.include_router(zones.router,       prefix="/api/zones",       tags=["zones"])

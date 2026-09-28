@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.config import get_settings
-from app.integrations.base import BaseConnector, ConnectorError
+from app.integrations.base import BaseConnector
 
 
 class CesiumIonConnector(BaseConnector):

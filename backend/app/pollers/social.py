@@ -14,7 +14,6 @@ from app.core.database import AsyncSessionLocal
 from app.models.report import Report
 from app.models.social_poll import SocialMediaPoll
 from app.services import nlp_service, deduplication, gis_service
-from app.services.geocoding import geocode
 
 logger = structlog.get_logger()
 settings = get_settings()

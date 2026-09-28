@@ -13,7 +13,6 @@ works in DEGRADED MODE (PRD §22).
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import redis.asyncio as aioredis
 import structlog

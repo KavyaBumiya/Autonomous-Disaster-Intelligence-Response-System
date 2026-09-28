@@ -19,12 +19,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.ai.providers.base import TaskType
 from app.ai.router.model_router import get_model_router
-from app.ai.registry.model_registry import get_model_registry, register_default_models
+from app.ai.registry.model_registry import get_model_registry
 from app.ai.nlp.disaster_nlp import get_disaster_nlp
 from app.ai.vision.image_analysis import get_image_pipeline
 from app.auth.dependencies import get_current_user

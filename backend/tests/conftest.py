@@ -44,3 +44,20 @@ def run(coro):
             await engine.dispose()
 
     return asyncio.run(_wrap())
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _database_schema() -> None:
+    """Create extensions, schema and seed data once per test session.
+
+    The app lifespan normally does this, but the module-level engine pools
+    asyncpg connections and every TestClient request runs in its own event
+    loop, so pooled connections cannot cross loops and the lifespan bootstrap
+    dies with "got Future attached to a different loop". Under uvicorn there is
+    a single loop for the whole process, so this is a test-harness constraint
+    only. Bootstrapping here — one loop, pool disposed afterwards — gives the
+    whole session one shared schema.
+    """
+    from app.main import _ensure_schema
+
+    run(_ensure_schema())

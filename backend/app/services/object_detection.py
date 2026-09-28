@@ -12,7 +12,7 @@ plus general object detection results.
 Model: yolov8n.pt — pretrained on COCO (80 classes) + additional fine-tuning
 for disaster-relevant classes.
 """
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from dataclasses import dataclass
 import structlog
 
@@ -88,7 +88,6 @@ async def detect_objects(
             disaster_type=disaster_type,
         )
 
-    import torch
     from PIL import Image
 
     img = Image.open(image_path)

@@ -7,7 +7,7 @@ satellite imagery, drone footage, or CCTV images.
 
 Output classes: no_damage, minor, moderate, severe, destroyed
 """
-from typing import Any, Dict, List, Optional
+from typing import List
 from dataclasses import dataclass
 import structlog
 

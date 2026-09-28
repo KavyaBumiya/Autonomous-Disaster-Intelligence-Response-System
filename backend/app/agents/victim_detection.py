@@ -7,7 +7,7 @@ Input: image file from report multipart upload
 Output: victim_count, victim_locations (bounding boxes), confidence_score
 """
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, List
 import structlog
 from PIL import Image
 import torch

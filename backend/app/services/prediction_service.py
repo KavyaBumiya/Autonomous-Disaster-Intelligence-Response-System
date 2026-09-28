@@ -8,13 +8,8 @@ can integrate with DB data. Provides:
 - fire: calculate_fire_spread, fire_spread_step
 - route: compute_alt_route with OSRM fallback awareness
 """
-from datetime import datetime, timedelta, timezone
-import math
 import structlog
-from typing import List, Dict, Any, Optional
 
-from shapely.geometry import Point, Polygon, shape
-from shapely.ops import transform
 
 logger = structlog.get_logger()
 

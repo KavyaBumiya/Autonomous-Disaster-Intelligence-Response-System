@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.zone import Zone
 from app.models.incident import Incident
-from app.services.deduplication import similarity_score  # reuse existing util
 
 logger = structlog.get_logger()
 
@@ -203,8 +202,7 @@ async def calculate_fire_spread(zone_id: str, wind_speed_kmh: float,
     - expires_at: datetime
     """
     import math
-    from shapely.geometry import Point, Polygon
-    from shapely.ops import transform
+    from shapely.geometry import Point
 
     if db is None:
         from app.core.database import AsyncSessionLocal as _AsyncSessionLocal

@@ -66,7 +66,13 @@ async def transcribe(audio_path: str | Path) -> dict:
 # ── Local openai-whisper ─────────────────────────────────────────────────
 
 def _transcribe_local(path: Path) -> dict:
-    import whisper
+    try:
+        import whisper
+    except ImportError as exc:
+        raise RuntimeError(
+            "Speech-to-text is unavailable on this deployment "
+            "(openai-whisper not installed). Submit the report as text instead."
+        ) from exc
 
     from app.services.whisper_stt import transcribe as local_transcribe
 

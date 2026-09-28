@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from app.core.config import get_settings
@@ -39,8 +38,7 @@ class TomTomConnector(BaseConnector):
             "computeTravelTimeFor": "all",
         })
         path = f"/routing/1/calculateRoute/{origin}:{destination}/json"
-        resp = await self.get_json(path, params=params)
-        data = resp.json()
+        data = await self.get_json(path, params=params)
         routes = data.get("routes", [])
         if not routes:
             raise ConnectorError(self.provider, "no routes returned", retryable=False)
@@ -69,11 +67,10 @@ class TomTomConnector(BaseConnector):
         zoom: int = 10,
     ) -> dict[str, Any]:
         params = self._add_key({"zoom": str(zoom), "style": "absolute"})
-        resp = await self.get_json(
+        data = await self.get_json(
             f"/traffic/services/4/flowSegmentData/absolute/{zoom}/json",
             params=params,
         )
-        data = resp.json()
         segment = data.get("flowSegmentData", {})
         return {
             "current_speed_kmh": segment.get("currentSpeed"),
@@ -98,8 +95,9 @@ class TomTomConnector(BaseConnector):
         if lat is not None and lng is not None:
             params["lat"] = str(lat)
             params["lon"] = str(lng)
-        resp = await self.get_json("/search/2/search/{query}.json".format(query=query), params=params)
-        data = resp.json()
+        data = await self.get_json(
+            f"/search/2/search/{query}.json", params=params
+        )
         results = data.get("results", [])
         return [
             {

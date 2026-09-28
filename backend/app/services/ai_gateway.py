@@ -37,7 +37,6 @@ from pydantic import BaseModel, ValidationError
 
 from app.core.config import get_settings
 from app.integrations.ai.nvidia_service import (
-    ConnectorError,
     NvidiaNIMConnector,
     extract_json,
     get_nvidia_client,
@@ -1002,7 +1001,7 @@ class ToolExecutor:
         threshold: float = 0.0,
         limit: int = 5,
     ) -> dict:
-        from sqlalchemy import select, and_
+        from sqlalchemy import select
         from app.models.incident import Incident
 
         q = select(Incident).where(
@@ -1221,7 +1220,7 @@ class ToolExecutor:
         limit: int = 5,
     ) -> dict:
         from sqlalchemy import select
-        from app.services.route_intelligence import shelters_near, haversine_km
+        from app.services.route_intelligence import shelters_near
         from app.models.zone import Zone as ZoneModel
 
         origin_lat, origin_lng = lat, lng

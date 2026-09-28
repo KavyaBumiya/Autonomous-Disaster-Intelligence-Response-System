@@ -79,7 +79,6 @@ def _load_transformer():
 
     try:
         from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
-        import torch
 
         logger.info("Loading distilbert NLP model", path=str(model_path))
         _tokenizer = DistilBertTokenizerFast.from_pretrained(str(model_path))

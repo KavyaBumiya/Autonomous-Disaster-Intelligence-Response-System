@@ -60,4 +60,6 @@ python-slugify==8.0.4          # URL-safe slugs
 
 # ── Tests ─────────────────────────────────────────────────────────────
 pytest>=8.0.0
+pytest-asyncio>=0.23.0         # async test support (@pytest.mark.asyncio)
+respx>=0.21.0                  # httpx mocking for connector unit tests
 # starlette TestClient uses httpx (already pinned above)

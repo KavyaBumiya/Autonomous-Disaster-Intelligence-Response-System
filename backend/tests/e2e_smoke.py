@@ -43,14 +43,8 @@ async def main() -> int:
         check("health.providers.canonical", "weather" in (h.get("providers") or {}),
               str(list((h.get("providers") or {}).keys())))
 
-        # 1. login (commander — needed for approval step)
-        r = await c.post("/api/auth/login",
-                         json={"username": "commander@aegis.demo", "password": "demo123"})
-        check("login", r.status_code == 200, f"HTTP {r.status_code}")
-        if r.status_code != 200:
-            return finish(t0)
-        tok = r.json()["access_token"]
-        H = {"Authorization": f"Bearer {tok}"}
+        # 1. public demo mode — no bearer token required
+        H: dict[str, str] = {}
         zone_id = "zone-alkapuri"
 
         # 1b. websocket client (connected first so it observes the whole run)

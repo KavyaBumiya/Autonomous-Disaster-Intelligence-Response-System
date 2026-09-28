@@ -256,10 +256,8 @@ def client():
 
 @pytest.fixture(scope="module")
 def auth_headers(client):
-    r = client.post("/api/auth/login",
-                    json={"username": "analyst@aegis.demo", "password": "demo123"})
-    assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+    # Public demo mode: routes ignore bearer tokens entirely.
+    return {}
 
 
 async def _seed_api_rows() -> None:

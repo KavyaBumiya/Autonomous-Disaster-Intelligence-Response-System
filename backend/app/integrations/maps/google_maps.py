@@ -22,8 +22,7 @@ class GoogleMapsConnector(BaseConnector):
 
     async def geocode(self, address: str) -> dict[str, Any]:
         params = self._add_key({"address": address})
-        resp = await self.get_json("/geocode/json", params=params)
-        data = resp.json()
+        data = await self.get_json("/geocode/json", params=params)
         if data.get("status") != "OK" or not data.get("results"):
             raise ConnectorError(
                 self.provider,
@@ -42,8 +41,7 @@ class GoogleMapsConnector(BaseConnector):
 
     async def reverse_geocode(self, lat: float, lng: float) -> dict[str, Any]:
         params = self._add_key({"latlng": f"{lat},{lng}"})
-        resp = await self.get_json("/geocode/json", params=params)
-        data = resp.json()
+        data = await self.get_json("/geocode/json", params=params)
         if data.get("status") != "OK" or not data.get("results"):
             raise ConnectorError(
                 self.provider,
@@ -73,8 +71,7 @@ class GoogleMapsConnector(BaseConnector):
             params["keyword"] = keyword
         if place_type:
             params["type"] = place_type
-        resp = await self.get_json("/place/nearbysearch/json", params=params)
-        data = resp.json()
+        data = await self.get_json("/place/nearbysearch/json", params=params)
         if data.get("status") not in ("OK", "ZERO_RESULTS"):
             raise ConnectorError(
                 self.provider,

@@ -71,8 +71,6 @@ def test_docs_and_openapi(client: TestClient):
     # Existing contract preserved
     for p in (
         "/api/health",
-        "/api/auth/login",
-        "/api/auth/me",
         "/api/reports",
         "/api/reports/voice",
         "/api/incidents",
@@ -114,11 +112,6 @@ def test_docs_and_openapi(client: TestClient):
 def test_no_double_api_prefix(client: TestClient):
     paths = client.get("/openapi.json").json()["paths"]
     assert "/api/api" not in paths
-
-
-def test_login_validation(client: TestClient):
-    r = client.post("/api/auth/login", json={})
-    assert r.status_code == 422
 
 
 def test_incidents_public(client: TestClient):
@@ -164,8 +157,18 @@ def test_invalid_token_ignored(client: TestClient):
 CONTRACT_ENDPOINTS: dict[str, set[str]] = {
     "/api": {"GET"},
     "/api/actions/{action_id}": {"PATCH"},
-    "/api/auth/login": {"POST"},
-    "/api/auth/me": {"GET"},
+    "/api/ai/analyze-image": {"POST"},
+    "/api/ai/analyze-report": {"POST"},
+    "/api/ai/classify-hazard": {"POST"},
+    "/api/ai/explain": {"POST"},
+    "/api/ai/forecast": {"POST"},
+    "/api/ai/health": {"GET"},
+    "/api/ai/models": {"GET"},
+    "/api/ai/models/{model_id}": {"GET"},
+    "/api/ai/predict": {"POST"},
+    "/api/ai/providers": {"GET"},
+    "/api/ai/summarize": {"POST"},
+    "/api/ai/verify-report": {"POST"},
     "/api/command/approval-queue": {"GET"},
     "/api/command/critical": {"GET"},
     "/api/command/explain/{incident_id}": {"GET"},
@@ -175,8 +178,26 @@ CONTRACT_ENDPOINTS: dict[str, set[str]] = {
     "/api/command/resources/available": {"GET"},
     "/api/command/summarise/{incident_id}": {"GET"},
     "/api/command/zone-status": {"GET"},
+    "/api/decision/approve": {"POST"},
+    "/api/decision/pending": {"GET"},
+    "/api/decision/recommend": {"POST"},
+    "/api/decision/reject": {"POST"},
+    "/api/decision/{decision_id}": {"GET"},
     "/api/earthquakes/recent": {"GET"},
+    "/api/firms/fires": {"GET"},
+    "/api/firms/fires/global": {"GET"},
+    "/api/globe/assets": {"GET"},
+    "/api/globe/assets/{asset_id}": {"GET"},
+    "/api/globe/token": {"GET"},
     "/api/health": {"GET"},
+    "/api/maps/geocode": {"GET"},
+    "/api/maps/places": {"GET"},
+    "/api/maps/reverse-geocode": {"GET"},
+    "/api/openai/analyze-disaster": {"POST"},
+    "/api/openai/chat": {"POST"},
+    "/api/traffic/flow": {"GET"},
+    "/api/traffic/route": {"GET"},
+    "/api/traffic/search": {"GET"},
     "/api/heatmaps/combined": {"GET"},
     "/api/heatmaps/disaster-type": {"GET"},
     "/api/heatmaps/priority": {"GET"},
@@ -243,12 +264,6 @@ def test_command_query_validation_without_token(client: TestClient):
 
 
 def test_heatmaps_priority(client: TestClient):
-    lr = client.post(
-        "/api/auth/login",
-        json={"username": "commander@aegis.demo", "password": "demo123"},
-    )
-    assert lr.status_code == 200, lr.text
-    headers = {"Authorization": f"Bearer {lr.json()['access_token']}"}
     for path in (
         "/api/heatmaps/priority",
         "/api/heatmaps/victim-density",
@@ -256,23 +271,13 @@ def test_heatmaps_priority(client: TestClient):
         "/api/heatmaps/disaster-type",
         "/api/heatmaps/combined",
     ):
-        r = client.get(path, headers=headers)
+        r = client.get(path)
         assert r.status_code == 200, f"{path} -> {r.status_code} {r.text[:200]}"
         body = r.json()
         assert "cells" in body
 
 
 def test_command_query_validation(client: TestClient):
-    # Auth runs before body validation — log in first to reach the 422 path.
-    lr = client.post(
-        "/api/auth/login",
-        json={"username": "analyst@aegis.demo", "password": "demo123"},
-    )
-    assert lr.status_code == 200, lr.text
-    token = lr.json()["access_token"]
-    r = client.post(
-        "/api/command/query",
-        json={},
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    # Public demo: body validation is reached without any auth.
+    r = client.post("/api/command/query", json={})
     assert r.status_code == 422

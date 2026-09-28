@@ -12,12 +12,10 @@ Hybrid gradient-boosted classifier combining:
 Output: trust_score in [0.0, 1.0] where 1.0 = highly trustworthy
 """
 import structlog
-from typing import Any, Dict, List, Optional
-from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
+from datetime import datetime, timezone
 
-from app.services.damage_classification import classify_damage, DamageResult
-from app.services.object_detection import detect_objects, DetectionResult
-from app.services.whisper_stt import transcribe
+from app.services.damage_classification import DamageResult
 
 logger = structlog.get_logger()
 

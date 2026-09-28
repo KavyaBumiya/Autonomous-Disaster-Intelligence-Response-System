@@ -579,22 +579,6 @@ def test_cache_survives_redis_down():
     run(main())
 
 
-# ── DB: auth surfaces 503, not a bare 500 ───────────────────────────────────
-
-def test_login_returns_503_when_db_down():
-    from app.api.auth import LoginRequest, login
-
-    async def main():
-        broken_db = AsyncMock()
-        broken_db.execute.side_effect = RuntimeError("connection refused")
-        with pytest.raises(HTTPException) as ei:
-            await login(LoginRequest(username="x", password="y"), db=broken_db)
-        assert ei.value.status_code == 503
-        assert "RuntimeError" in str(ei.value.detail)
-
-    run(main())
-
-
 # ── /api/health: canonical providers + service reasons (Phase 16) ───────────
 
 def test_health_canonical_provider_keys_and_services():

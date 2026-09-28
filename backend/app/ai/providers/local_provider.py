@@ -120,7 +120,6 @@ class LocalModelProvider(AIModelProvider):
         audio_path = input_data if isinstance(input_data, str) else input_data.get("audio_path", "")
         model_name = model_id or "local-whisper-base"
 
-        from transformers import pipeline
         pipe = self._get_pipeline("automatic-speech-recognition", model_name)
         output = pipe(audio_path)
 
@@ -140,7 +139,6 @@ class LocalModelProvider(AIModelProvider):
         text = input_data if isinstance(input_data, str) else input_data.get("text", "")
         model_name = model_id or "local-distilbert-classifier"
 
-        from transformers import pipeline
         pipe = self._get_pipeline("text-classification", model_name)
         output = pipe(text, truncation=True)
 

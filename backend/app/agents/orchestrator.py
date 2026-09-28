@@ -379,7 +379,6 @@ async def _enrich_infrastructure(zone: Zone, db: AsyncSession) -> None:
     """Refresh GIS cache for the zone when nothing is cached nearby.
     Gated twice: (a) skip when features already exist near the zone,
     (b) Redis throttle — at most one Overpass attempt per zone per hour."""
-    from datetime import timedelta
 
     from app.integrations import cache as redis_cache
     from app.models.infrastructure import Infrastructure

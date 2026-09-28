@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.config import get_settings
-from app.integrations.base import BaseConnector, ConnectorError
+from app.integrations.base import BaseConnector
 
 
 class NASAFIRMSConnector(BaseConnector):
@@ -64,7 +64,6 @@ class NASAFIRMSConnector(BaseConnector):
         d_lng = radius_km / (111.32 * cos_lat)
         area = f"{lng - d_lng},{lat - d_lat},{lng + d_lng},{lat + d_lat}"
         fires = await self.get_active_fires(area=area, day_range=days)
-        import math
         filtered = [
             f for f in fires
             if self._haversine(lat, lng, f["latitude"], f["longitude"]) <= radius_km

@@ -19,7 +19,6 @@ import structlog
 from app.ai.providers.base import (
     AIModelProvider,
     ModelInfo,
-    Modality,
     PredictionResult,
     TaskType,
 )
@@ -307,7 +306,6 @@ class HuggingFaceProvider(AIModelProvider):
         text = input_data if isinstance(input_data, str) else input_data.get("text", "")
         model = model_id or "aegis-hazard-classifier-v1"
 
-        from transformers import pipeline
 
         pipe = self._get_pipeline("text-classification", model)
         output = pipe(text, truncation=True, max_length=512)
@@ -330,7 +328,6 @@ class HuggingFaceProvider(AIModelProvider):
         text = input_data if isinstance(input_data, str) else input_data.get("text", "")
         model = model_id or "facebook/bart-large-cnn"
 
-        from transformers import pipeline
 
         pipe = self._get_pipeline("summarization", model)
         input_words = len(text.split())
@@ -356,7 +353,6 @@ class HuggingFaceProvider(AIModelProvider):
         tgt = kwargs.get("target_lang", "en")
         model = model_id or "aegis-translation-v1"
 
-        from transformers import pipeline
 
         pipe = self._get_pipeline("translation", model)
         output = pipe(text, src_lang=src, tgt_lang=tgt)
@@ -378,7 +374,6 @@ class HuggingFaceProvider(AIModelProvider):
         text = input_data if isinstance(input_data, str) else input_data.get("text", "")
         model = model_id or "aegis-ner-v1"
 
-        from transformers import pipeline
 
         pipe = self._get_pipeline("ner", model, aggregation_strategy="simple")
         output = pipe(text)
@@ -400,7 +395,6 @@ class HuggingFaceProvider(AIModelProvider):
         texts = input_data if isinstance(input_data, list) else input_data.get("texts", [])
         model = model_id or "aegis-embedding-v1"
 
-        from transformers import AutoModel, AutoTokenizer
 
         tokenizer = self._get_tokenizer(model)
         model_obj = self._get_model(model)
@@ -428,7 +422,6 @@ class HuggingFaceProvider(AIModelProvider):
         image = input_data if isinstance(input_data, str) else input_data.get("image", "")
         model = model_id or "aegis-damage-assessment-v1"
 
-        from transformers import pipeline
 
         pipe = self._get_pipeline("image-classification", model)
         output = pipe(image)
@@ -450,7 +443,6 @@ class HuggingFaceProvider(AIModelProvider):
         image = input_data if isinstance(input_data, str) else input_data.get("image", "")
         model = model_id or "aegis-victim-detection-v1"
 
-        from transformers import pipeline
 
         pipe = self._get_pipeline("object-detection", model)
         output = pipe(image)
@@ -472,7 +464,6 @@ class HuggingFaceProvider(AIModelProvider):
         audio = input_data if isinstance(input_data, str) else input_data.get("audio", "")
         model = model_id or "aegis-stt-v1"
 
-        from transformers import pipeline
 
         pipe = self._get_pipeline("automatic-speech-recognition", model)
         output = pipe(audio)

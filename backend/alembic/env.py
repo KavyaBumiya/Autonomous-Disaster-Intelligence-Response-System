@@ -9,7 +9,10 @@ from app.core.database import Base
 import app.models  # noqa: F401 — registers all ORM models
 
 config = context.config
-fileConfig(config.config_file_name)
+# disable_existing_loggers must stay False: _stamp_alembic_head() runs inside the
+# uvicorn process during startup, and the default would silence uvicorn.error /
+# uvicorn.access for the rest of the process — including crash tracebacks.
+fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

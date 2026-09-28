@@ -140,7 +140,7 @@ class DisasterNLP:
 
     def _detect_language(self, text: str) -> str:
         try:
-            from langdetect import detect, LangDetectException
+            from langdetect import detect
             return detect(text[:200])
         except Exception:
             return "unknown"

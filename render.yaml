@@ -3,12 +3,31 @@ services:
     name: aegis-ai-backend
     runtime: docker
     plan: free
+    # The Dockerfile lives in backend/, not the repo root.
+    rootDir: backend
+    healthCheckPath: /api/health
     envVars:
+      # ── Required ──────────────────────────────────────────────
       - key: DATABASE_URL
         sync: false
+      - key: JWT_SECRET
+        sync: false
+      # ── Cache (optional — API degrades to "degraded" if absent) ─
       - key: REDIS_URL
         sync: false
+      # ── Frontend origin (comma-separated; empty = allow all) ──
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: APP_ENV
+        value: production
+      # openai-whisper is not in the image (too heavy for the free tier),
+      # so voice reports return an honest error instead of transcribing.
+      - key: STT_PROVIDER
+        value: disabled
+      # ── External providers (optional) ──────────────────────────
       - key: HF_TOKEN
+        sync: false
+      - key: HUGGINGFACE_TOKEN
         sync: false
       - key: NVIDIA_API_KEY
         sync: false
@@ -16,10 +35,15 @@ services:
         sync: false
       - key: MAPBOX_TOKEN
         sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: TOMTOM_API_KEY
+        sync: false
+      - key: CESIUM_ION_TOKEN
+        sync: false
       - key: TWITTER_BEARER_TOKEN
         sync: false
       - key: NASA_API_KEY
         sync: false
-      - key: CORS_ORIGINS
-        value: "*"
-    healthCheckPath: /api/health
+      - key: NASA_FIRMS_API_KEY
+        sync: false

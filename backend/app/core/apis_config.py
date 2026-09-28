@@ -5,7 +5,7 @@ Centralized configuration for all external data sources and APIs used by the sys
 Organized by priority and usage category based on the project's research phase analysis.
 """
 
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any
 
 # ─── Weather APIs ──────────────────────────────────────────────────────
 WEATHER_APIS = {
