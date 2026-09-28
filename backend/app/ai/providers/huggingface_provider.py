@@ -334,8 +334,8 @@ class HuggingFaceProvider(AIModelProvider):
 
         pipe = self._get_pipeline("summarization", model)
         input_words = len(text.split())
-        max_len = min(kwargs.get("max_length", 120), max(10, input_words // 2))
-        output = pipe(text, max_length=max_len, min_length=min(30, max_len // 2))
+        max_len = min(kwargs.get("max_length", 120), max(5, input_words // 2))
+        output = pipe(text, max_length=max_len, min_length=0)
 
         return PredictionResult(
             prediction=output[0]["summary_text"] if output else "",

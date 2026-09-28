@@ -227,12 +227,9 @@ def get_model_router() -> ModelRouter:
     global _router
     if _router is None:
         _router = ModelRouter()
-        # Auto-register all providers
         from app.ai.providers.huggingface_provider import get_huggingface_provider
         from app.ai.providers.local_provider import get_local_provider
-        from app.ai.providers.nvidia_provider import get_nvidia_provider
 
         _router.register_provider(get_huggingface_provider())
         _router.register_provider(get_local_provider())
-        _router.register_provider(get_nvidia_provider())
     return _router
