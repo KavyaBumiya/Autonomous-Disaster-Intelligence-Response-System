@@ -39,10 +39,6 @@ spacy==3.7.4
 # spaCy English model installed via Dockerfile: python -m spacy download en_core_web_sm
 langdetect==1.0.9
 
-# ── Speech-to-text ────────────────────────────────────────────
-openai-whisper==20231117
-ffmpeg-python==0.2.0           # audio format conversion
-
 # ── Deduplication ─────────────────────────────────────────────
 datasketch==1.6.5
 
