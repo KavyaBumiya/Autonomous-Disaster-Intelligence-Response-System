@@ -1,0 +1,26 @@
+name: Deploy Backend to HF Space
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git clone https://kavyabumiya:${HF_TOKEN}@huggingface.co/spaces/kavyabumiya/AEGIS-AI /tmp/aegis-space
+          rsync -av --delete --exclude='.git' --exclude='__pycache__' --exclude='.env' backend/ /tmp/aegis-space/
+          cd /tmp/aegis-space
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add .
+          git diff --cached --quiet || git commit -m "Auto-deploy: ${{ github.sha }}"
+          git push
