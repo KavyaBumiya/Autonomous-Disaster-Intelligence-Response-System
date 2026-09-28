@@ -4,6 +4,8 @@ Run from backend/:  pytest tests/ -q
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -124,6 +126,79 @@ def test_zones_public(client: TestClient):
     assert r.status_code == 200
 
 
+def test_create_zone_persists_and_is_idempotent(client: TestClient):
+    """A declared zone must be readable back, and re-posting its name must
+    update it rather than create a second row."""
+    # Unique per run: the suite shares one database, and a fixed name would
+    # make "created" depend on whether a previous run left the row behind.
+    name = f"Test Reach {uuid.uuid4().hex[:8]}"
+    payload = {
+        "name": name,
+        "centroid_lat": 22.3072,
+        "centroid_lng": 73.1812,
+        "radius_meters": 2500.0,
+        "density_ratio": 0.4,
+    }
+
+    first = client.post("/api/zones", json=payload)
+    assert first.status_code == 201, first.text
+    body = first.json()
+    assert body["created"] is True
+    assert body["density_ratio"] == 0.4
+    assert body["radius_meters"] == 2500.0
+
+    # The zone is now a real row, not just an echoed request.
+    listed = client.get("/api/zones").json()
+    match = [z for z in listed["zones"] if z["zone_id"] == body["zone_id"]]
+    assert len(match) == 1
+    assert match[0]["density_ratio"] == 0.4
+
+    # Re-posting the same name updates geometry, and says so.
+    second = client.post(
+        "/api/zones",
+        json={**payload, "radius_meters": 4000.0, "density_ratio": 0.7},
+    )
+    assert second.status_code == 201
+    assert second.json()["created"] is False
+    assert second.json()["zone_id"] == body["zone_id"]
+    assert second.json()["radius_meters"] == 4000.0
+
+    after = client.get("/api/zones").json()
+    assert len([z for z in after["zones"] if z["zone_id"] == body["zone_id"]]) == 1
+
+
+def test_create_zone_rejects_out_of_range_geometry(client: TestClient):
+    """Bad coordinates must be refused rather than stored."""
+    for bad in (
+        {"name": "Bad Lat", "centroid_lat": 91.0, "centroid_lng": 0.0},
+        {"name": "Bad Lng", "centroid_lat": 0.0, "centroid_lng": 181.0},
+        {"name": "Bad Radius", "centroid_lat": 0.0, "centroid_lng": 0.0, "radius_meters": 0},
+        {"name": "Bad Density", "centroid_lat": 0.0, "centroid_lng": 0.0, "density_ratio": 1.5},
+        {"name": "   ", "centroid_lat": 0.0, "centroid_lng": 0.0},
+    ):
+        r = client.post("/api/zones", json=bad)
+        assert r.status_code == 422, f"{bad} was accepted"
+
+
+def test_create_zone_builds_postgis_polygon(client: TestClient):
+    """A declared zone gets real geometry so provider readings can be joined
+    spatially. Without a polygon, every spatial query silently returns nothing."""
+    r = client.post(
+        "/api/zones",
+        json={
+            "name": f"Geometry Check {uuid.uuid4().hex[:8]}",
+            "centroid_lat": 22.3072,
+            "centroid_lng": 73.1812,
+            "radius_meters": 1000.0,
+        },
+    )
+    assert r.status_code == 201
+    zone_id = r.json()["zone_id"]
+
+    detail = client.get(f"/api/zones/{zone_id}").json()
+    assert detail["zone_id"] == zone_id
+
+
 def test_resources_public(client: TestClient):
     r = client.get("/api/resources")
     assert r.status_code == 200
@@ -223,7 +298,7 @@ CONTRACT_ENDPOINTS: dict[str, set[str]] = {
     "/api/routes/compute": {"POST"},
     "/api/weather/current": {"GET"},
     "/api/weather/forecast": {"GET"},
-    "/api/zones": {"GET"},
+    "/api/zones": {"GET", "POST"},
     "/api/zones/{zone_id}": {"GET"},
     "/api/zones/{zone_id}/reports/summary": {"GET"},
 }

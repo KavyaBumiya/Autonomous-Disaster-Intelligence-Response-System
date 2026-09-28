@@ -35,9 +35,13 @@ logger = structlog.get_logger()
 # Default number of resources to assign per incident (configurable)
 DEFAULT_RESOURCE_COUNT = 3
 
-# Scoring weights: distance (0-1) + capacity availability (0-1)
+# Scoring weights: proximity (0-1) + capacity availability (0-1)
 DISTANCE_WEIGHT = 0.6
 CAPACITY_WEIGHT = 0.4
+
+# Distance at which proximity has decayed to zero. Beyond this, being further
+# away stops making a resource worse.
+MAX_DISPATCH_KM = 50.0
 
 # Phase 2 integration weights
 BEHAVIOUR_WEIGHT = 0.15  # behaviour risk influence on scoring
@@ -107,19 +111,30 @@ async def command_resources(incident: Incident, db: AsyncSession,
             supply_modifier = 1.0 + SUPPLY_WEIGHT * supply_urgency        # 1.0-1.10 range
             scored = []
             for r in all_resources:
-                # Distance approximation: we'll use a simple placeholder
-                # In production: haversine or PostGIS spatial query
                 dist_km = _resource_distance_km(r, centroid_lat, centroid_lng)
                 capacity_factor = 1.0 - (r.current_load / max(r.capacity, 1))
-                # Normalized scores: distance (0-1, 50km = max), capacity factor (0-1)
-                dist_score = min(1.0, dist_km / 50.0)  # 50km normalizes to 1.0
-                cap_score = capacity_factor
+                # Normalized scores, both "higher is better":
+                #   proximity (1.0 at the centroid, 0.0 at MAX_DISPATCH_KM)
+                #   spare capacity (1.0 empty, 0.0 full)
+                prox_score = (
+                    1.0 - min(1.0, dist_km / MAX_DISPATCH_KM)
+                    if dist_km is not None
+                    else None
+                )
+                # A resource with no coordinates has an unknown distance. It
+                # must not be ranked as if it were far away, nor as if it were
+                # close: it is scored on capacity alone and sorted after every
+                # resource whose distance is actually known.
+                if prox_score is None:
+                    adjusted_score = CAPACITY_WEIGHT * capacity_factor
+                    scored.append((adjusted_score, -1.0, r))
+                    continue
                 # Apply Phase 2 modifiers: higher risk/urgency increases score (dispatch priority)
-                adjusted_score = (DISTANCE_WEIGHT * dist_score + CAPACITY_WEIGHT * cap_score
+                adjusted_score = (DISTANCE_WEIGHT * prox_score + CAPACITY_WEIGHT * capacity_factor
                                 * behaviour_modifier * supply_modifier)
-                scored.append((adjusted_score, r))
-            scored.sort(key=lambda x: x[0], reverse=True)
-            selected = [r for _, r in scored[:DEFAULT_RESOURCE_COUNT]]
+                scored.append((adjusted_score, prox_score, r))
+            scored.sort(key=lambda row: (row[0], row[1]), reverse=True)
+            selected = [r for _, _, r in scored[:DEFAULT_RESOURCE_COUNT]]
 
     # ── Step 3: Update resource availability & load ─────────────────────
     assigned_ids = []
@@ -215,35 +230,23 @@ async def command_resources(incident: Incident, db: AsyncSession,
     }
 
 
-def _resource_distance_km(resource: Resource, centroid_lat: float, centroid_lng: float) -> float:
+def _resource_distance_km(resource: Resource, centroid_lat: float, centroid_lng: float) -> float | None:
     """
-    Calculate distance in km between resource (lat/lng) and zone centroid
-    using the haversine formula for accuracy.
-    In production: PostGIS ST_Distance_Sphere for optimal performance.
+    Great-circle distance in km between a resource and the zone centroid.
+
+    Returns None when the resource has no recorded coordinates. The caller must
+    treat that as "unknown" rather than substituting a number: a fixed default
+    distance silently invents a position for a resource we cannot locate.
+
+    Uses PostGIS ST_Distance_Sphere in production for indexed accuracy.
     """
     from math import radians, sin, cos, sqrt, asin
     R = 6371.0  # Earth radius in km
     if resource.lat is None or resource.lng is None:
-        return 50.0  # default fallback distance
+        return None
     lat1 = radians(resource.lat)
     lat2 = radians(centroid_lat)
     dlng = radians(centroid_lng - resource.lng)
     a = sin((radians(centroid_lat) - radians(resource.lat)) / 2) ** 2 + \
         cos(lat1) * cos(lat2) * sin(dlng / 2) ** 2
-    return 2 * R * asin(sqrt(a))
-
-
-def _math_haversine_approx(lat_diff: float, lng_diff: float) -> float:
-    """Very approximate distance in km given lat/lng differences."""
-    # Actually use proper haversine instead of the rough blend
-    from math import radians, sin, cos, sqrt, asin
-    R = 6371.0
-    lat1 = 0.0
-    lat2 = lat_diff
-    lng1 = 0.0
-    lng2 = lng_diff
-    lat1_r = radians(lat1)
-    lat2_r = radians(lat2)
-    lng_diff_r = radians(lng2)
-    a = sin((lat2_r - lat1_r) / 2) ** 2 + cos(lat1_r) * cos(lat2_r) * sin(lng_diff_r / 2) ** 2
     return 2 * R * asin(sqrt(a))

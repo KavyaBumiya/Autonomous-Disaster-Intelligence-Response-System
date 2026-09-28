@@ -69,27 +69,16 @@ _MAX_VICTIM_SCORE   = 100.0   # victim_count × severity normalised to this
 _MAX_REPORT_SIGNAL  = 20.0    # 20+ corroborating reports = maximum signal
 _MAX_AGE_HOURS      = 24.0    # incidents > 24h old lose time-sensitivity weight
 
-# ── Static population density lookup (Vadodara neighbourhoods) ───────────
-_POPULATION_DENSITY: dict[str, float] = {
-    "vadodara":   1.0,
-    "alkapuri":   0.9,
-    "fatehgunj":  0.85,
-    "sayajigunj": 0.9,
-    "manjalpur":  0.7,
-    "karelibaug": 0.8,
-    "gorwa":      0.65,
-    "harni":      0.6,
-}
-
-
-def _population_factor(zone_name: str | None) -> float:
-    if not zone_name:
+# ── Population density ───────────────────────────────────────────────────
+# Population density is a real-world attribute of a place, so it is read from
+# the zone's own recorded value rather than inferred from a hard-coded lookup
+# table of named neighbourhoods. Zones created through POST /api/zones may
+# carry density_ratio (0–1); without it the factor is neutral rather than
+# guessed from the zone's name.
+def _population_factor(density_ratio: float | None) -> float:
+    if density_ratio is None:
         return 0.5
-    lower = zone_name.lower()
-    for key, val in _POPULATION_DENSITY.items():
-        if key in lower:
-            return val
-    return 0.5
+    return min(1.0, max(0.0, float(density_ratio)))
 
 
 def priority_band(score: float) -> str:
@@ -229,7 +218,7 @@ async def score_zone(zone_id: str, incident: Incident, db: AsyncSession) -> dict
     zone_row = (
         await db.execute(select(_Zone).where(_Zone.id == zone_id))
     ).scalar_one_or_none()
-    pop_factor = _population_factor(zone_row.name if zone_row else None)
+    pop_factor = _population_factor(zone_row.density_ratio if zone_row else None)
 
     # ── Build XAI reasoning ──────────────────────────────────────────────
     factor_values = {

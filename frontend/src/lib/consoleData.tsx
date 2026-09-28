@@ -11,19 +11,20 @@
  */
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import {
-  FALLBACK_ALLOCATION_PLAN,
-  FALLBACK_ALLOCATION_QUEUE,
-  FALLBACK_ALERTS,
-  FALLBACK_FORECAST_SERIES,
-  FALLBACK_KPIS,
-  FALLBACK_MARKERS,
-  FALLBACK_PREDICTION_SUMMARY,
-  FALLBACK_PRIORITY_ALERT,
-  FALLBACK_RECOMMENDATIONS,
-  FALLBACK_RESOURCE_SLOTS,
-  FALLBACK_ROUTES,
-  FALLBACK_TEAMS,
-  FALLBACK_ZONE_STATS,
+  EMPTY_ALLOCATION_PLAN,
+  EMPTY_ALLOCATION_QUEUE,
+  EMPTY_ALERTS,
+  EMPTY_FORECAST_SERIES,
+  EMPTY_KPIS,
+  EMPTY_MARKERS,
+  EMPTY_PREDICTION_SUMMARY,
+  EMPTY_PRIORITY_ALERT,
+  EMPTY_RESOURCE_SLOTS,
+  EMPTY_ROUTES,
+  EMPTY_TEAMS,
+  EMPTY_ZONE_STATS,
+  NO_DATA,
+  UNAVAILABLE,
 } from "./fallbacks";
 import { hasData, num } from "./format";
 import {
@@ -75,7 +76,7 @@ import {
   useZoneNames,
   useZones,
 } from "./hooks";
-import type { ApprovalAction, Incident, Resource } from "./types";
+import type { ApprovalAction, Incident, Resource, Zone } from "./types";
 
 export type { ResourceSlotId, ResourceSlotVisual };
 
@@ -93,7 +94,6 @@ export interface ConsoleVisuals {
   evidenceLabels: readonly string[];
   constraintTitles: readonly string[];
   pressureLabels: readonly string[];
-  pressureNotes: readonly string[];
 }
 
 /** Published console state. */
@@ -101,6 +101,8 @@ export interface ConsoleData {
   /** Primary zone the console focuses on, resolved from the backend. */
   zoneId: string | null;
   zoneName: string;
+  /** Full zone record, for coordinates and radius. */
+  zone: Zone | null;
 
   alerts: AlertRow[];
   resourceCards: Array<ResourceSlotVisual<unknown> & { value: number; total: number }>;
@@ -156,11 +158,6 @@ export function useConsoleData(): ConsoleData {
   return value;
 }
 
-/** Offline baselines for the constraint and pressure panels. */
-const OFFLINE_CONSTRAINT_VALUES = ["0%", "0%", "0%", "0%"];
-const OFFLINE_CONSTRAINT_STATUS = ["Unknown", "Unknown", "Unknown", "Unknown"];
-const OFFLINE_PRESSURE_VALUES = ["—", "—", "—", "—"];
-
 export function ConsoleDataProvider({
   visuals,
   children,
@@ -201,12 +198,12 @@ export function ConsoleDataProvider({
     [incidents.data],
   );
 
-  // With the backend unreachable we must show the numbers the console showed
-  // before it was wired, not a zeroed rollup.
+  // A failed read must never render as a plausible-looking number. True zeros
+  // keep the cards honest; the degraded banner explains why they are empty.
   const slotTotals = useMemo(
     () =>
       resources.error
-        ? FALLBACK_RESOURCE_SLOTS
+        ? EMPTY_RESOURCE_SLOTS
         : resourceSlotTotals(resources.data),
     [resources.data, resources.error],
   );
@@ -218,23 +215,23 @@ export function ConsoleDataProvider({
 
   const alerts = useMemo(() => {
     const rows = toAlertRows(incidents.data);
-    return incidents.error ? FALLBACK_ALERTS : rows;
+    return incidents.error ? EMPTY_ALERTS : rows;
   }, [incidents.data, incidents.error]);
 
   const routeRows = useMemo(() => {
     const rows = toRouteRows(routes.data);
-    return routes.error ? FALLBACK_ROUTES : rows;
+    return routes.error ? EMPTY_ROUTES : rows;
   }, [routes.data, routes.error]);
 
   const teamRows = useMemo(() => {
     const rows = toTeamRows(teamResources.data, zones.data, zoneNames);
-    return teamResources.error ? FALLBACK_TEAMS : rows;
+    return teamResources.error ? EMPTY_TEAMS : rows;
   }, [teamResources.data, zones.data, zoneNames, teamResources.error]);
 
   const kpis = useMemo(
     () =>
       incidents.error || incidents.isInitialLoading
-        ? FALLBACK_KPIS
+        ? EMPTY_KPIS
         : toOverviewKpis({
             incidents: incidents.data,
             zones: zones.data,
@@ -255,27 +252,33 @@ export function ConsoleDataProvider({
       topIncident
         ? toPriorityAlert(topIncident, predictions.data?.last_flood?.max_intensity ?? null, evidenceStreams)
         : // No incident row is not the same as no backend: when we have never
-          // had a payload (offline, still loading, or erroring) keep the
-          // original alert rather than claiming there is nothing wrong.
+          // had a payload (offline, still loading, or erroring) we say so
+          // rather than implying a specific flood is underway.
           incidents.data
             ? toPriorityAlert(null, null, 0)
-            : FALLBACK_PRIORITY_ALERT,
+            : EMPTY_PRIORITY_ALERT,
     [topIncident, predictions.data, evidenceStreams, incidents.data],
   );
 
-  const recommendations = useMemo(() => {
-    const rows = toRecommendations(approvalQueue.data?.actions ?? null);
-    return approvalQueue.error ? FALLBACK_RECOMMENDATIONS : rows;
-  }, [approvalQueue.data, approvalQueue.error]);
+  // No pending approval means no recommendation. An empty list is the honest
+  // result; previously this rendered pre-written advice as if it were the
+  // Decision Engine's current advice.
+  const recommendations = useMemo<RecommendationRow[]>(
+    () =>
+      approvalQueue.error
+        ? []
+        : toRecommendations(approvalQueue.data?.actions ?? null),
+    [approvalQueue.data, approvalQueue.error],
+  );
 
   const allocationQueue = useMemo(() => {
     const rows = toAllocationQueue(approvalQueue.data?.actions ?? null);
-    return approvalQueue.error ? FALLBACK_ALLOCATION_QUEUE : rows;
+    return approvalQueue.error ? EMPTY_ALLOCATION_QUEUE : rows;
   }, [approvalQueue.data, approvalQueue.error]);
 
   const allocationPlan = useMemo(() => {
     const rows = toRecommendations(approvalQueue.data?.actions ?? null, 4).map((row) => row.text);
-    return approvalQueue.error ? FALLBACK_ALLOCATION_PLAN : rows;
+    return approvalQueue.error ? EMPTY_ALLOCATION_PLAN : rows;
   }, [approvalQueue.data, approvalQueue.error]);
 
   const constraints = useMemo(
@@ -283,8 +286,8 @@ export function ConsoleDataProvider({
       resources.error
         ? visuals.constraintTitles.map((title, index) => ({
             title,
-            value: OFFLINE_CONSTRAINT_VALUES[index] ?? "0%",
-            status: OFFLINE_CONSTRAINT_STATUS[index] ?? "Unknown",
+            value: "0%",
+            status: NO_DATA,
           }))
         : toConstraints(slotTotals, [...visuals.constraintTitles]),
     [resources.data, resources.error, slotTotals, visuals.constraintTitles],
@@ -293,17 +296,17 @@ export function ConsoleDataProvider({
   const pressure = useMemo(
     () =>
       resources.error
-        ? visuals.pressureLabels.map((label, index) => ({
+        ? visuals.pressureLabels.map((label) => ({
             label,
-            value: OFFLINE_PRESSURE_VALUES[index] ?? "0%",
-            note: visuals.pressureNotes[index] ?? "",
+            value: UNAVAILABLE,
+            note: NO_DATA,
           }))
-        : toSupplyPressure(slotTotals, [...visuals.pressureLabels], [...visuals.pressureNotes]),
-    [resources.data, resources.error, slotTotals, visuals.pressureLabels, visuals.pressureNotes],
+        : toSupplyPressure(slotTotals, [...visuals.pressureLabels]),
+    [resources.data, resources.error, slotTotals, visuals.pressureLabels],
   );
 
   const forecastSeries = useMemo(
-    () => toForecastSeries(predictions.data?.last_flood?.affected_cells ?? null) ?? FALLBACK_FORECAST_SERIES,
+    () => toForecastSeries(predictions.data?.last_flood?.affected_cells ?? null) ?? EMPTY_FORECAST_SERIES,
     [predictions.data],
   );
 
@@ -315,9 +318,9 @@ export function ConsoleDataProvider({
             predictions.data.last_flood?.flooded_percentage ?? null,
             topIncident,
           )
-        : // No projection payload at all: keep the pre-wiring figures rather
-          // than reporting a confident "LOW RISK, 1 min, 0 people".
-          { ...FALLBACK_PREDICTION_SUMMARY },
+        : // No projection payload at all: report nothing rather than a
+          // confident "LOW RISK, 1 min, 0 people".
+          { ...EMPTY_PREDICTION_SUMMARY },
     [predictions.data, topIncident],
   );
 
@@ -335,7 +338,7 @@ export function ConsoleDataProvider({
   );
 
   const markers = useMemo(() => {
-    if (incidents.error || resources.error) return FALLBACK_MARKERS;
+    if (incidents.error || resources.error) return EMPTY_MARKERS;
     const pins = toMapMarkers({
       zone,
       incidents: incidents.data,
@@ -355,7 +358,7 @@ export function ConsoleDataProvider({
   }, [incidents.lastUpdatedAt, resources.lastUpdatedAt, predictions.lastUpdatedAt]);
 
   const zoneStats = useMemo<ZoneStats>(() => {
-    if (!zone && !topIncident) return FALLBACK_ZONE_STATS;
+    if (!zone && !topIncident) return EMPTY_ZONE_STATS;
     return {
       risk:
         predictionSummary.riskBand === "HIGH RISK"
@@ -402,6 +405,7 @@ export function ConsoleDataProvider({
     () => ({
       zoneId,
       zoneName: zone?.name ?? "No zone selected",
+      zone,
       alerts,
       resourceCards,
       routeRows,

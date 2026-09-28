@@ -11,7 +11,7 @@ import {
 } from "./lib/consoleData";
 import { api } from "./lib/api";
 import { useAssistant } from "./lib/useAssistant";
-import { FALLBACK_MARKERS } from "./lib/fallbacks";
+import { EMPTY_MARKERS } from "./lib/fallbacks";
 import LiveMapCanvas from "./components/LiveMapCanvas";
 
 type Role = "Command" | "Rescue" | "NGO";
@@ -29,29 +29,38 @@ const RESOURCE_SLOTS: readonly ResourceSlotVisual<typeof Users>[] = [
 
 const VISUALS: ConsoleVisuals = {
   resourceSlots: RESOURCE_SLOTS,
+  // Every label here must name a source the backend actually polls. There is no
+  // CCTV connector, so listing one would imply a camera feed that does not exist.
   evidenceLabels: [
     "River sensor trend",
     "Satellite moisture anomaly",
-    "CCTV waterline detection",
     "Citizen reports",
     "Weather nowcast",
   ],
   constraintTitles: ["Ambulance availability", "Rescue team coverage", "Water reserve", "Fuel stock"],
   pressureLabels: ["Water", "Medical kits", "Food", "Fuel"],
-  pressureNotes: ["Reserve 180 units", "Stable", "Restock in 4 hr", "Priority replenishment"],
 };
 
 const INITIAL_ASSISTANT_MESSAGES: Array<{ who: "ai" | "user"; text: string }> = [];
 
-/** Per-slot confirmation toasts, preserved from the original recommendations. */
+/**
+ * Confirmation toasts. These report what the operator just did via the API,
+ * so they are keyed to a real action rather than asserting a stock level or
+ * reservation the backend never confirmed.
+ */
 const RECOMMENDATION_TOASTS = [
-  "Action added to review queue",
+  "Added to review queue",
   "Route review opened",
-  "Resource reservation drafted",
+  "Reservation drafted",
 ];
 
 /** Per-slot confirmations for the resources allocation queue. */
-const ALLOCATION_TOASTS = ["Allocation 1 approved", "Allocation 2 approved", "Allocation 3 approved", "Allocation 4 approved"];
+const ALLOCATION_TOASTS = [
+  "Allocation approved",
+  "Allocation approved",
+  "Allocation approved",
+  "Allocation approved",
+];
 
 /**
  * Root: supplies the console's visual vocabulary and exposes live data to the
@@ -167,7 +176,7 @@ function Console() {
 
       <div className="flex">
         <aside className="sticky top-16 hidden h-[calc(100vh-4rem)] w-56 shrink-0 border-r border-line bg-[#081321] p-3 lg:block">
-          <div className="mb-5 px-2 pt-2"><p className="eyebrow">Operations</p><p className="mt-1 text-xs text-slate-500">Ahmedabad · Incident 24-091</p></div>
+          <div className="mb-5 px-2 pt-2"><p className="eyebrow">Operations</p><p className="mt-1 text-xs text-slate-500">{data.zoneName}</p></div>
           <nav className="space-y-1">
             {nav.map((item, i) => {
               const Icon = item.icon;
@@ -256,7 +265,7 @@ function Overview(p: any) {
       </aside>
     </div>
     <div className="mt-4 grid gap-4 lg:grid-cols-2"><IncidentMini alerts={filteredAlerts} selected={selectedAlert} setSelected={setSelectedAlert} onView={() => setActiveNav("Incidents")}/><RouteMini onView={() => setActiveNav("Routes")}/></div>
-    <div className="mt-4 rounded-2xl border border-line bg-[#0a1726] px-4 py-3"><div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500"><span className="flex items-center gap-1.5"><CircleHelp size={12}/> AI recommendations are decision support, not autonomous commands.</span><span className="hidden text-slate-700 sm:block">•</span><span className="flex items-center gap-1.5"><Clock3 size={12}/> Data freshness: {freshness}</span><span className="hidden text-slate-700 sm:block">•</span><span className="flex items-center gap-1.5"><Layers3 size={12}/> Sources: satellite · CCTV · citizen reports · field teams</span></div></div>
+    <div className="mt-4 rounded-2xl border border-line bg-[#0a1726] px-4 py-3"><div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500"><span className="flex items-center gap-1.5"><CircleHelp size={12}/> AI recommendations are decision support, not autonomous commands.</span><span className="hidden text-slate-700 sm:block">•</span><span className="flex items-center gap-1.5"><Clock3 size={12}/> Data freshness: {freshness}</span><span className="hidden text-slate-700 sm:block">•</span><span className="flex items-center gap-1.5"><Layers3 size={12}/> Sources: satellite · citizen reports · field teams</span></div></div>
     {aiOpen ? <div className="fixed bottom-4 right-4 z-40 w-[calc(100vw-2rem)] max-w-[360px]"><div className="rounded-2xl border border-cyan/20 bg-[#0a1726]/95 p-3 shadow-2xl backdrop-blur-xl"><div className="flex items-center gap-2"><div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan/10 text-cyan"><Bot size={17}/></div><div className="flex-1"><p className="text-xs font-bold">Ask AegisAI</p><p className="text-[10px] text-slate-500">Command mode · live context enabled</p></div><button onClick={() => setAiOpen(false)} className="text-slate-500"><X size={15}/></button></div><div className="mt-3 flex items-center gap-2"><input ref={assistant.inputRef} onKeyDown={e => e.key === "Enter" && assistant.submit()} placeholder="e.g. Where should Team 4 go?" className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-slate-950/60 px-3 text-[11px] outline-none placeholder:text-slate-600"/><button onClick={assistant.submit} className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan text-[#04101b]"><ChevronRight size={16}/></button></div></div></div> : <button onClick={() => setAiOpen(true)} className="fixed bottom-4 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-cyan text-[#04101b] shadow-lg"><Bot size={20}/></button>}
   </>;
 }
@@ -291,7 +300,10 @@ function MapCard({ mapLayer, setMapLayer, markers, freshness, feeds }: any) {
 }
 
 function MapCanvas({ mapLayer, markers, freshness }: { mapLayer: string; markers?: any; freshness?: string }) {
-  const pins = Array.isArray(markers) && markers.length > 0 ? markers : FALLBACK_MARKERS;
+  // No live markers means the map is genuinely empty. Rendering placeholder
+  // pins here would put four coloured dots on a blank map with no way to tell
+  // they were invented.
+  const pins = Array.isArray(markers) ? markers : EMPTY_MARKERS;
   return <div className="relative h-[420px] overflow-hidden map-grid bg-[#091827]"><svg viewBox="0 0 900 520" className="absolute inset-0 h-full w-full"><g opacity=".25" stroke="#7890a8" fill="none" strokeWidth="2"><path d="M50 85 L260 110 L380 55 L560 120 L820 70"/><path d="M10 190 L210 170 L360 235 L540 205 L890 260"/><path d="M20 350 L180 290 L350 330 L510 290 L720 360 L900 320"/><path d="M160 20 L190 500"/><path d="M330 0 L390 520"/><path d="M520 0 L490 520"/><path d="M700 0 L660 520"/></g><g opacity=".32" stroke="#39d9ff" fill="none" strokeWidth="6"><path d="M35 430 C180 320 180 150 340 190 S590 370 865 120"/></g><path className="route" d="M60 420 C190 320 220 220 360 250 S570 350 810 150" fill="none" stroke="#35d39a" strokeWidth="5" strokeLinecap="round"/>{pins.map((p:any,i:number)=><g key={i}><circle cx={p.x} cy={p.y} r="18" fill={p.c} opacity=".12" className={i===0 ? "pulse" : ""}/><circle cx={p.x} cy={p.y} r="7" fill={p.c}/><rect x={p.x+12} y={p.y-12} rx="5" width="64" height="20" fill="#07111f" opacity=".9"/><text x={p.x+22} y={p.y+2} fill={p.c} fontSize="9" fontWeight="700">{p.label}</text></g>)}</svg><div className="absolute bottom-3 left-3 flex flex-wrap gap-2"><span className="chip"><span className="h-2 w-2 rounded-full bg-danger"/> Critical</span><span className="chip"><span className="h-2 w-2 rounded-full bg-amber"/> Warning</span><span className="chip"><span className="h-2 w-2 rounded-full bg-cyan"/> Shelter</span><span className="chip"><span className="h-2 w-2 rounded-full bg-success"/> Safe route</span></div><div className="absolute right-3 top-3 rounded-lg border border-line bg-[#07111f]/90 px-3 py-2 text-[10px] text-slate-400">{mapLayer} layer · Updated {freshness ?? "8"} sec ago</div></div>;
 }
 
@@ -311,8 +323,11 @@ function ResourceMini({ onView }: any) {
 
 function LiveMap({ mapLayer, setMapLayer, notify }: any) {
   const data = useConsoleData();
-  const { markers, freshness, zoneStats, zoneName, feedHealth } = data;
-  return <><PageHeader eyebrow="Operations / Live Map" title="Live operational map" description="Unified view of predicted risk, verified incidents, field teams, shelters and recommended movement."><span className="chip"><Radio size={12} className="text-success"/> {feedHealth.streamLabel}</span><button onClick={()=>{data.refreshAll(); notify("Map layers refreshed");}} className="icon-btn"><RefreshCw size={16}/></button></PageHeader><div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]"><div className="panel overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3"><div className="flex gap-1 rounded-lg border border-line bg-slate-950/40 p-1">{["Risk","Routes","Teams","Shelters"].map(l=><button key={l} onClick={()=>setMapLayer(l)} className={`rounded-md px-3 py-1.5 text-[10px] ${mapLayer===l?"bg-slate-700 text-white":"text-slate-500"}`}>{l}</button>)}</div><span className="text-[10px] text-slate-500">Ahmedabad · 20.2°N / 73.0°E · {freshness} freshness</span></div><LiveMapCanvas mapLayer={mapLayer} markers={markers} freshness={freshness} /></div><section className="space-y-4"><div className="panel p-4"><p className="eyebrow">Map controls</p><div className="mt-3 space-y-2">{["Flood extent","Prediction cone","CCTV coverage","Citizen reports","Team positions"].map((x,i)=><div key={x} className="flex items-center justify-between rounded-lg border border-line bg-slate-950/30 px-3 py-2.5"><span className="text-xs text-slate-300">{x}</span><span className={`h-4 w-7 rounded-full p-0.5 ${i===2?"bg-slate-700":"bg-cyan/30"}`}><span className={`block h-3 w-3 rounded-full bg-white ${i===2?"":"ml-3"}`}/></span></div>)}</div></div><div className="panel p-4"><p className="eyebrow">Selected zone</p><h2 className="mt-1 text-sm font-semibold">{zoneName}</h2><div className="mt-3 grid grid-cols-2 gap-2"><MiniStat label="Risk" value={zoneStats.risk}/><MiniStat label="ETA" value={zoneStats.eta}/><MiniStat label="People" value={zoneStats.people}/><MiniStat label="Confidence" value={zoneStats.confidence}/></div><button onClick={()=>notify("Zone response plan opened")} className="mt-3 w-full rounded-lg bg-cyan py-2 text-[11px] font-bold text-[#04101b]">Open response plan</button></div></section></div></>;
+  const { markers, freshness, zoneStats, zoneName, zone, feedHealth } = data;
+  const zoneCoords = zone
+    ? `${Math.abs(zone.centroid_lat).toFixed(1)}°${zone.centroid_lat >= 0 ? "N" : "S"} / ${Math.abs(zone.centroid_lng).toFixed(1)}°${zone.centroid_lng >= 0 ? "E" : "W"}`
+    : null;
+  return <><PageHeader eyebrow="Operations / Live Map" title="Live operational map" description="Unified view of predicted risk, verified incidents, field teams, shelters and recommended movement."><span className="chip"><Radio size={12} className="text-success"/> {feedHealth.streamLabel}</span><button onClick={()=>{data.refreshAll(); notify("Map layers refreshed");}} className="icon-btn"><RefreshCw size={16}/></button></PageHeader><div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]"><div className="panel overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3"><div className="flex gap-1 rounded-lg border border-line bg-slate-950/40 p-1">{["Risk","Routes","Teams","Shelters"].map(l=><button key={l} onClick={()=>setMapLayer(l)} className={`rounded-md px-3 py-1.5 text-[10px] ${mapLayer===l?"bg-slate-700 text-white":"text-slate-500"}`}>{l}</button>)}</div><span className="text-[10px] text-slate-500">{zoneName}{zoneCoords ? ` · ${zoneCoords}` : ""} · {freshness} freshness</span></div><LiveMapCanvas mapLayer={mapLayer} markers={markers} freshness={freshness} /></div><section className="space-y-4"><div className="panel p-4"><p className="eyebrow">Map controls</p><div className="mt-3 space-y-2">{["Flood extent","Prediction cone","Citizen reports","Team positions"].map((x,i)=><div key={x} className="flex items-center justify-between rounded-lg border border-line bg-slate-950/30 px-3 py-2.5"><span className="text-xs text-slate-300">{x}</span><span className="h-4 w-7 rounded-full bg-cyan/30 p-0.5"><span className="ml-3 block h-3 w-3 rounded-full bg-white"/></span></div>)}</div></div><div className="panel p-4"><p className="eyebrow">Selected zone</p><h2 className="mt-1 text-sm font-semibold">{zoneName}</h2><div className="mt-3 grid grid-cols-2 gap-2"><MiniStat label="Risk" value={zoneStats.risk}/><MiniStat label="ETA" value={zoneStats.eta}/><MiniStat label="People" value={zoneStats.people}/><MiniStat label="Confidence" value={zoneStats.confidence}/></div><button onClick={()=>notify("Zone response plan opened")} className="mt-3 w-full rounded-lg bg-cyan py-2 text-[11px] font-bold text-[#04101b]">Open response plan</button></div></section></div></>;
 }
 
 function Incidents({ alerts, selected, setSelected, query, setQuery, notify, refreshAll }: any) {
@@ -434,13 +449,13 @@ function CommanderPage({ notify }: any) {
 }
 
 function AssistantPage({ role, notify }: { role: Role; notify: (s:string)=>void }) {
-  const { zoneId, feedHealth, topIncident } = useConsoleData();
+  const { zoneId, feedHealth, topIncident, zoneName } = useConsoleData();
   // Real command-center conversation: POST /api/command/query with a stable
   // conversation id. The optimistic user turn and the toast are unchanged.
   const assistant = useAssistant(INITIAL_ASSISTANT_MESSAGES, zoneId, notify);
   const { messages, input, setInput, send } = assistant;
   const contextLabel = topIncident?.incident_id ?? "No active incident";
-  return <><PageHeader eyebrow="AI systems / Assistant" title="Ask AegisAI" description="Conversational access to the live operational picture, with traceable recommendations and explicit operator confirmation."><span className="chip"><Radio size={12} className={assistant.lastReplyFromAi ? "text-success" : "text-slate-500"}/> Live context · {role} mode</span></PageHeader><div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]"><section className="panel flex min-h-[620px] flex-col"><div className="border-b border-line px-4 py-3"><p className="text-xs font-semibold">Operational conversation</p><p className="mt-1 text-[10px] text-slate-500">Context: {contextLabel} · Ahmedabad · {feedHealth.sourceCount} connected sources</p></div><div className="flex-1 space-y-4 overflow-auto p-4">{messages.map((m,i)=><div key={i} className={`flex ${m.who==="user"?"justify-end":""}`}><div className={`max-w-[75%] rounded-2xl px-4 py-3 text-xs leading-5 ${m.who==="user"?"bg-cyan text-[#04101b]":"border border-line bg-slate-950/40 text-slate-300"}`}>{m.text}</div></div>)}{assistant.isThinking && <div className="flex"><div className="rounded-2xl border border-line bg-slate-950/40 px-4 py-3 text-xs text-slate-500">Correlating live context…</div></div>}</div><div className="border-t border-line p-3"><div className="flex gap-2"><input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Ask about incidents, routes, resources..." className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-slate-950/50 px-3 text-xs outline-none focus:border-cyan/40"/><button onClick={send} className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan text-[#04101b]"><Send size={16}/></button></div></div></section><section className="space-y-4"><div className="panel p-4"><PanelTitle eyebrow="Suggested prompts" title="Quick actions"/><div className="mt-3 space-y-2">{["Summarize the current situation","Which team should move next?","Show blocked routes","What resources are low?","Explain the flood prediction"].map(x=><button key={x} onClick={()=>setInput(x)} className="w-full rounded-lg border border-line px-3 py-2.5 text-left text-[11px] text-slate-300 hover:bg-slate-900">{x}</button>)}</div></div><div className="panel p-4"><PanelTitle eyebrow="Trust layer" title="Every answer should show"/><div className="mt-3 space-y-3 text-[11px] text-slate-400"><div className="flex gap-2"><CheckCircle2 size={14} className="text-success"/> Evidence sources</div><div className="flex gap-2"><CheckCircle2 size={14} className="text-success"/> Confidence / uncertainty</div><div className="flex gap-2"><CheckCircle2 size={14} className="text-success"/> Recommended action</div><div className="flex gap-2"><CheckCircle2 size={14} className="text-success"/> Human confirmation required</div></div></div></section></div></>;
+  return <><PageHeader eyebrow="AI systems / Assistant" title="Ask AegisAI" description="Conversational access to the live operational picture, with traceable recommendations and explicit operator confirmation."><span className="chip"><Radio size={12} className={assistant.lastReplyFromAi ? "text-success" : "text-slate-500"}/> Live context · {role} mode</span></PageHeader><div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]"><section className="panel flex min-h-[620px] flex-col"><div className="border-b border-line px-4 py-3"><p className="text-xs font-semibold">Operational conversation</p><p className="mt-1 text-[10px] text-slate-500">Context: {contextLabel} · {zoneName} · {feedHealth.sourceCount} connected sources</p></div><div className="flex-1 space-y-4 overflow-auto p-4">{messages.map((m,i)=><div key={i} className={`flex ${m.who==="user"?"justify-end":""}`}><div className={`max-w-[75%] rounded-2xl px-4 py-3 text-xs leading-5 ${m.who==="user"?"bg-cyan text-[#04101b]":"border border-line bg-slate-950/40 text-slate-300"}`}>{m.text}</div></div>)}{assistant.isThinking && <div className="flex"><div className="rounded-2xl border border-line bg-slate-950/40 px-4 py-3 text-xs text-slate-500">Correlating live context…</div></div>}</div><div className="border-t border-line p-3"><div className="flex gap-2"><input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Ask about incidents, routes, resources..." className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-slate-950/50 px-3 text-xs outline-none focus:border-cyan/40"/><button onClick={send} className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan text-[#04101b]"><Send size={16}/></button></div></div></section><section className="space-y-4"><div className="panel p-4"><PanelTitle eyebrow="Suggested prompts" title="Quick actions"/><div className="mt-3 space-y-2">{["Summarize the current situation","Which team should move next?","Show blocked routes","What resources are low?","Explain the flood prediction"].map(x=><button key={x} onClick={()=>setInput(x)} className="w-full rounded-lg border border-line px-3 py-2.5 text-left text-[11px] text-slate-300 hover:bg-slate-900">{x}</button>)}</div></div><div className="panel p-4"><PanelTitle eyebrow="Trust layer" title="Every answer should show"/><div className="mt-3 space-y-3 text-[11px] text-slate-400"><div className="flex gap-2"><CheckCircle2 size={14} className="text-success"/> Evidence sources</div><div className="flex gap-2"><CheckCircle2 size={14} className="text-success"/> Confidence / uncertainty</div><div className="flex gap-2"><CheckCircle2 size={14} className="text-success"/> Recommended action</div><div className="flex gap-2"><CheckCircle2 size={14} className="text-success"/> Human confirmation required</div></div></div></section></div></>;
 }
 
 function PanelTitle({ eyebrow, title }: { eyebrow:string; title:string }) { return <div><p className="eyebrow">{eyebrow}</p><h2 className="mt-1 text-sm font-semibold">{title}</h2></div>; }

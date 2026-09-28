@@ -17,6 +17,17 @@ from app.ai.registry.model_registry import ModelRegistry, get_model_registry, re
 from app.ai.router.model_router import ModelRouter, get_model_router
 
 
+def _no_token_init(self):
+    """Provider init that behaves exactly as if HUGGINGFACE_TOKEN were unset."""
+    self._tokenizers = {}
+    self._hf_token = ""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    self._api_base = settings.huggingface_api_base
+    self._timeout = settings.huggingface_timeout_seconds
+
+
 class TestProviderBase:
     """Test the base provider abstraction."""
 
@@ -46,7 +57,11 @@ class TestHuggingFaceProvider:
     """Test Hugging Face provider."""
 
     @pytest.mark.asyncio
-    async def test_health_no_token(self):
+    async def test_health_no_token(self, monkeypatch):
+        # Force the unconfigured case explicitly. Relying on the ambient
+        # environment having no HUGGINGFACE_TOKEN made this test pass or fail
+        # depending on a developer's local .env.
+        monkeypatch.setattr(HuggingFaceProvider, "__init__", _no_token_init)
         provider = HuggingFaceProvider()
         health = await provider.health()
         assert health["provider"] == "huggingface"
@@ -62,7 +77,8 @@ class TestHuggingFaceProvider:
         assert "aegis-damage-assessment-v1" in model_ids
 
     @pytest.mark.asyncio
-    async def test_predict_fallback_no_token(self):
+    async def test_predict_fallback_no_token(self, monkeypatch):
+        monkeypatch.setattr(HuggingFaceProvider, "__init__", _no_token_init)
         provider = HuggingFaceProvider()
         result = await provider.predict(
             TaskType.HAZARD_CLASSIFICATION,

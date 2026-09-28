@@ -562,14 +562,17 @@ class AIGateway:
     ) -> CommandQueryResponse:
         """
         Process a commander natural-language query via NVIDIA NIM with tool
-        calling. If the AI provider is unavailable, falls back to deterministic
-        offline responses (never raises, never fabricates).
+        calling.
+
+        If no AI provider can answer, returns a fixed statement of
+        unavailability with ``ai_used=False``. It never raises, and it never
+        returns a canned answer in place of a real one.
         """
         if not self.available:
             return CommandQueryResponse(
                 response=_offline_response(user_query),
-                model_used="offline-fallback",
-                ai_call_id="offline",
+                model_used="unavailable",
+                ai_call_id="unavailable",
                 ai_used=False,
             )
 
@@ -602,13 +605,13 @@ class AIGateway:
             log.success = False
             log.error   = str(exc)
             _log_call(log)
-            logger.warning("nvidia_command_query_failed — using offline fallback", error=str(exc))
+            logger.warning("nvidia_command_query_failed — AI unavailable", error=str(exc))
             # The key is present but the call did not succeed (bad key, network,
-            # rate limit). Report the fallback honestly instead of attributing
-            # the deterministic reply to the NIM model that was attempted.
+            # rate limit). Report unavailability rather than attributing a
+            # canned reply to the NIM model that was attempted.
             return CommandQueryResponse(
                 response=_offline_response(user_query),
-                model_used="offline-fallback",
+                model_used="unavailable",
                 ai_call_id=log.call_id,
                 ai_used=False,
             )
@@ -1624,36 +1627,29 @@ def _detect_lang(text: str) -> str:
 
 
 def _offline_response(query: str) -> str:
-    """Rule-based offline responses when the AI provider is unavailable."""
-    q = query.lower()
+    """The single message returned when no AI provider can answer a query.
 
-    if any(w in q for w in ("critical", "urgent", "highest priority")):
-        return (
-            "⚠️  AI Gateway is offline. Using deterministic fallback.\n"
-            "To see critical incidents: check the live incidents panel or call "
-            "GET /api/command/critical directly."
-        )
-    if any(w in q for w in ("resource", "team", "available")):
-        return (
-            "⚠️  AI Gateway is offline. Resource data: "
-            "call GET /api/command/resources/available for live resource status."
-        )
-    if any(w in q for w in ("predict", "flood", "fire", "spread", "simulation")):
-        return (
-            "⚠️  AI Gateway is offline. Prediction simulations are available at "
-            "POST /api/predictions/what-if with zone_id and disaster_type."
-        )
-    if any(w in q for w in ("weather", "rain", "wind")):
-        return (
-            "⚠️  AI Gateway is offline. Weather data is polled every 5 minutes "
-            "from Open-Meteo. Check the zone detail panel."
-        )
+    There is deliberately no keyword routing here. An earlier version matched
+    words like "resource" or "weather" and picked a pre-written paragraph, which
+    made a canned string look like a considered answer to a question nobody
+    answered. This returns one fixed statement of unavailability instead: it
+    performs no analysis, asserts nothing about the incident, and cannot be
+    mistaken for a model response. The response is always accompanied by
+    ``ai_used=False`` and ``model_used="unavailable"``.
 
+    Live data does not depend on this provider — incidents, resources, zones,
+    predictions and the Decision Engine all still work and are served by their
+    own endpoints.
+    """
+    del query  # the message is identical whatever was asked
     return (
-        "⚠️  AI Gateway is currently offline (NVIDIA_API_KEY not set or service unavailable).\n"
-        "The deterministic Decision Engine and all data APIs are still operational.\n"
-        "Available endpoints: /api/incidents, /api/resources, /api/zones, "
-        "/api/predictions/what-if, /api/command/critical"
+        "AI analysis is unavailable: no AI provider is configured or the "
+        "provider could not be reached (NVIDIA_API_KEY is unset or the call "
+        "failed). No analysis was performed for your question.\n\n"
+        "Live provider data is unaffected and still available at: "
+        "/api/incidents, /api/resources, /api/zones, "
+        "/api/predictions/what-if, /api/command/critical, "
+        "/api/command/resources/available."
     )
 
 def _build_fallback_summary(evidence: dict) -> str:

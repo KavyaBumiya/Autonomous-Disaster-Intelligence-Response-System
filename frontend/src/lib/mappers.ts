@@ -664,19 +664,36 @@ export interface PressureRow {
   note: string;
 }
 
-/** Supply pressure rows for the resources page. */
+/**
+ * Supply pressure rows for the resources page.
+ *
+ * The note is a status word derived from the live percentage, never a
+ * pre-written instruction: a hard-coded note like "Reserve 180 units" would
+ * assert a stock level the backend never reported. No configured note is
+ * passed in, so `notes` is optional and unused by the console.
+ */
 export function toSupplyPressure(
   totals: Record<ResourceSlotId, ResourceSlotValue>,
   labels: string[],
-  notes: string[],
 ): PressureRow[] {
   const order: ResourceSlotId[] = ["water", "vehicles", "food", "teams"];
   return labels.map((label, index) => {
     const slot = order[index % order.length];
     const { value, total } = totals[slot];
-    const pct = total > 0 ? Math.round(clamp(value / total, 0, 1) * 100) : 0;
-    return { label, value: `${clamp(pct, 0, 100)}%`, note: notes[index] ?? "" };
+    if (total <= 0) {
+      return { label, value: "—", note: "No inventory recorded" };
+    }
+    const pct = Math.round(clamp(value / total, 0, 1) * 100);
+    return { label, value: `${clamp(pct, 0, 100)}%`, note: pressureNote(pct) };
   });
+}
+
+/** Status word for a live stock percentage. */
+function pressureNote(pct: number): string {
+  if (pct <= 0) return "Depleted";
+  if (pct < 20) return "Critical";
+  if (pct < 50) return "Low";
+  return "Adequate";
 }
 
 // ── Map markers ──────────────────────────────────────────────────────────

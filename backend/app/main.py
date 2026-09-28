@@ -5,7 +5,6 @@ Mounts Socket.IO alongside the REST API via ASGI middleware.
 Starts background pollers (weather, seismic, social) on startup.
 """
 import asyncio
-import importlib
 import socketio
 import structlog
 from contextlib import asynccontextmanager
@@ -89,7 +88,12 @@ async def _reconcile_missing_columns() -> list[str]:
 
 
 async def _ensure_schema() -> None:
-    """Create extensions + full schema from models, then seed demo users."""
+    """Create extensions + full schema from models.
+
+    No demo rows are inserted: every record in the database originates from a
+    live provider (USGS, NASA EONET/FIRMS, weather, traffic) or from an
+    operator-declared entity such as a zone created through POST /api/zones.
+    """
     import app.models  # noqa: F401 — register models for create_all
     from app.models.user import User
 
@@ -129,36 +133,10 @@ async def _ensure_schema() -> None:
         except Exception as exc2:
             logger.warning("Alembic failed after partial create_all", error=str(exc2))
 
-    # Re-ensure users
+    # Ensure the users table exists. Rows are no longer seeded — auth is public
+    # and nothing in the request path reads this table.
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: User.__table__.create(c, checkfirst=True))
-
-    try:
-        async with AsyncSessionLocal() as db:
-            res = await db.execute(text("SELECT 1 FROM users LIMIT 1"))
-            row = res.first()
-            if not row:
-                logger.info("Users table empty — running demo seeder")
-                seed = importlib.import_module("seed")
-                await seed.seed_users(db)
-                await db.commit()
-                logger.info("Demo seed complete")
-            else:
-                logger.info("Users already present — skip user seed")
-
-            # Fixture data (zones/resources/reports) whenever zones is empty
-            zcount = (await db.execute(text("SELECT COUNT(*) FROM zones"))).scalar() or 0
-            if not zcount:
-                try:
-                    seed = importlib.import_module("seed")
-                    await seed.seed_fixtures(db)
-                    await db.commit()
-                    logger.info("Fixture seed complete")
-                except Exception as exc:
-                    logger.warning("Fixture seed skipped", error=str(exc))
-                    await db.rollback()
-    except Exception as exc:
-        logger.error("Seed failed", error=str(exc), error_type=type(exc).__name__)
 
 
 @asynccontextmanager

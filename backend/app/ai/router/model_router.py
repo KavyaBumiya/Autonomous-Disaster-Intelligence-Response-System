@@ -229,7 +229,14 @@ def get_model_router() -> ModelRouter:
         _router = ModelRouter()
         from app.ai.providers.huggingface_provider import get_huggingface_provider
         from app.ai.providers.local_provider import get_local_provider
+        from app.ai.providers.nvidia_provider import get_nvidia_provider
 
         _router.register_provider(get_huggingface_provider())
         _router.register_provider(get_local_provider())
+        # NVIDIA NIM was implemented but never registered, so /api/ai/router/health
+        # could not see it and the router could not route to it. Registration is
+        # unconditional: the provider reports OFFLINE by itself when
+        # NVIDIA_API_KEY is unset, which is more honest than hiding the provider
+        # and letting its absence look like a configuration gap.
+        _router.register_provider(get_nvidia_provider())
     return _router

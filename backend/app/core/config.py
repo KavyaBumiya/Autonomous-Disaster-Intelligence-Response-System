@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     # MET Norway Locationforecast (keyless; identifying UA required by policy)
     # and Photon/Komoot geocoder (keyless OSM-based, cloud-IP friendly).
     met_norway_base_url:     str = "https://api.met.no/weatherapi/locationforecast/2.0"
-    met_norway_user_agent:   str = "AegisAI/1.0 (public demo; contact: ops@aegis.local)"
+    met_norway_user_agent:   str = "AegisAI/1.0 (disaster-response monitoring; contact: ops@aegis.local)"
     photon_base_url:         str = "https://photon.komoot.io"
     reliefweb_api_url:       str = "https://api.reliefweb.int/v1/"
     twitter_bearer_token:    str = ""
@@ -168,7 +168,6 @@ class Settings(BaseSettings):
     huggingface_preload_models: str = ""
 
     # ── App / media ───────────────────────────────────────────────────────
-    demo_scenario: str = "vadodara_flood"
     media_dir:     str = "media/audio"
     app_env:       str = "development"
     # Comma-separated browser origins for CORS. Empty = allow all (local demo).
@@ -187,9 +186,9 @@ class Settings(BaseSettings):
         """Credentialed CORS is only valid against explicit origins.
 
         The CORS spec forbids combining a wildcard `Access-Control-Allow-Origin`
-        with credentials, so cookies/auth are enabled only once FRONTEND_ORIGIN
-        names real origins. The public demo uses bearer tokens, which travel in
-        the Authorization header and work fine under a wildcard origin.
+        with credentials, so cookies are enabled only once FRONTEND_ORIGIN
+        names real origins. Requests to this API are currently unauthenticated
+        and carry no credentials, so a wildcard origin is workable.
         """
         return "*" not in self.cors_origins
 

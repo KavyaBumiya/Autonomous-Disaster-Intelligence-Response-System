@@ -68,9 +68,9 @@ let readToken: TokenReader = () => null;
 /**
  * Optional bearer-token hook.
  *
- * The backend currently runs in public demo mode and issues no 401, so the UI
- * never has to sign in. This exists purely so a future deployment can drop a
- * token in without touching any call site.
+ * This deployment runs unauthenticated: the backend issues no 401, so the UI
+ * never has to sign in. The hook exists so a future deployment can drop a token
+ * in without touching any call site.
  */
 export function setAuthTokenReader(reader: TokenReader | null): void {
   readToken = reader ?? (() => null);

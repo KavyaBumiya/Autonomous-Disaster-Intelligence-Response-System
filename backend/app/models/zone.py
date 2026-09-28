@@ -24,6 +24,11 @@ class Zone(Base):
     priority_score: Mapped[float | None] = mapped_column(Float, nullable=True, default=0.0)
     victim_count: Mapped[int | None]     = mapped_column(Integer, nullable=True, default=0)
 
+    # Relative population density (0–1), supplied by the operator when the zone
+    # is declared. NULL means unknown and is treated as neutral by the
+    # Decision Engine rather than guessed from the zone name.
+    density_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     # Soft-delete (added in migration 0003)
     deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False,
                                           server_default="false")

@@ -472,14 +472,32 @@ def test_poll_seismic_survives_usgs_down():
 
 # ── AI gateway: offline fallback + registry recording (§31/§34) ────────────────
 
-def test_ai_unavailable_returns_offline_fallback():
+def test_ai_unavailable_reports_unavailable():
+    """No provider configured must produce one honest statement of
+    unavailability, not a canned answer to the question."""
     async def main():
         with patch.object(
             AIGateway, "available", new_callable=PropertyMock, return_value=False
         ):
             resp = await ai_gateway.command_query("Which resources are available?")
-        assert "offline" in resp.response.lower()
-        assert resp.model_used == "offline-fallback"
+        assert "unavailable" in resp.response.lower()
+        # The reply must not pretend to have analysed the question.
+        assert "no analysis was performed" in resp.response.lower()
+        assert resp.model_used == "unavailable"
+
+    run(main())
+
+
+def test_ai_unavailable_response_is_question_independent():
+    """The same message is returned whatever was asked. This is deliberate: a
+    keyword-routed reply could be mistaken for a considered answer."""
+    async def main():
+        with patch.object(
+            AIGateway, "available", new_callable=PropertyMock, return_value=False
+        ):
+            a = await ai_gateway.command_query("What is the flood risk?")
+            b = await ai_gateway.command_query("How many teams are free?")
+        assert a.response == b.response
 
     run(main())
 
@@ -512,7 +530,7 @@ def test_ai_call_failure_does_not_claim_the_nim_model():
         ):
             resp = await ai_gateway.command_query("What is the flood risk?")
         assert resp.ai_used is False
-        assert resp.model_used == "offline-fallback"
+        assert resp.model_used == "unavailable"
 
     run(main())
 
@@ -526,13 +544,13 @@ def test_ai_success_reports_ai_used_true():
         ):
             resp = await ai_gateway.command_query("Which zone is critical?")
         assert resp.ai_used is True
-        assert resp.model_used != "offline-fallback"
+        assert resp.model_used != "unavailable"
         assert resp.response == "Zone 17 is critical."
 
     run(main())
 
 
-def test_ai_call_failure_falls_back_and_records_registry():
+def test_ai_call_failure_reports_unavailable_and_records_registry():
     async def main():
         with patch.object(
             AIGateway, "available", new_callable=PropertyMock, return_value=True
@@ -542,7 +560,9 @@ def test_ai_call_failure_falls_back_and_records_registry():
             new=AsyncMock(side_effect=RuntimeError("nvidia down")),
         ):
             resp = await ai_gateway.command_query("What is the flood risk?")
-        assert "offline" in resp.response.lower()   # honest fallback, no crash
+        # Honest about not answering, and it does not raise.
+        assert "unavailable" in resp.response.lower()
+        assert resp.ai_used is False
         assert registry.get_status("nvidia") in ("DEGRADED", "OFFLINE")
 
     run(main())

@@ -312,13 +312,14 @@ class HuggingFaceProvider(AIModelProvider):
 
         return PredictionResult(
             prediction=output[0]["label"] if output else "unknown",
-            confidence=output[0]["score"] if output else 0.0,
+            # Cast numpy scalars: they are not JSON serialisable.
+            confidence=float(output[0]["score"]) if output else 0.0,
             model_id=model,
             model_version="1.0.0",
             provider=self.provider_name,
             task=TaskType.TEXT_CLASSIFICATION,
             generated_at=datetime.now(timezone.utc).isoformat(),
-            explanation=f"Classified as {output[0]['label']} with {output[0]['score']:.0%} confidence" if output else "No prediction",
+            explanation=f"Classified as {output[0]['label']} with {float(output[0]['score']):.0%} confidence" if output else "No prediction",
             evidence=[{"signal": "text_classification", "raw_output": str(output)}],
         )
 
@@ -379,8 +380,19 @@ class HuggingFaceProvider(AIModelProvider):
         output = pipe(text)
 
         return PredictionResult(
-            prediction=[{"entity": e["entity_group"], "text": e["word"], "score": e["score"]} for e in output],
-            confidence=max((e["score"] for e in output), default=0.0),
+            # transformers returns numpy.float32 scores. Those are not JSON
+            # serialisable: FastAPI's encoder raises on them and the whole
+            # endpoint returns 422 as soon as one entity is found. Cast every
+            # score to a plain float on the way out.
+            prediction=[
+                {
+                    "entity": e["entity_group"],
+                    "text": e["word"],
+                    "score": float(e["score"]),
+                }
+                for e in output
+            ],
+            confidence=float(max((e["score"] for e in output), default=0.0)),
             model_id=model,
             model_version="1.0.0",
             provider=self.provider_name,
@@ -428,7 +440,8 @@ class HuggingFaceProvider(AIModelProvider):
 
         return PredictionResult(
             prediction=output[0]["label"] if output else "unknown",
-            confidence=output[0]["score"] if output else 0.0,
+            # Cast numpy scalars so the response stays JSON-safe.
+            confidence=float(output[0]["score"]) if output else 0.0,
             model_id=model,
             model_version="1.0.0",
             provider=self.provider_name,
@@ -448,8 +461,16 @@ class HuggingFaceProvider(AIModelProvider):
         output = pipe(image)
 
         return PredictionResult(
-            prediction=[{"label": d["label"], "score": d["score"], "box": d["box"]} for d in output],
-            confidence=max((d["score"] for d in output), default=0.0),
+            # As in _ner: cast numpy scalars so the response stays JSON-safe.
+            prediction=[
+                {
+                    "label": d["label"],
+                    "score": float(d["score"]),
+                    "box": [float(v) for v in d["box"]],
+                }
+                for d in output
+            ],
+            confidence=float(max((d["score"] for d in output), default=0.0)),
             model_id=model,
             model_version="1.0.0",
             provider=self.provider_name,
