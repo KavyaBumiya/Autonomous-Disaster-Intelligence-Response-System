@@ -1,73 +1,25 @@
-# Render.com Deployment Blueprint for AegisAI Backend
-# Reference: https://render.com/docs/blueprint-spec
-
 services:
-  # ── Backend API Service (Docker) ─────────────────────────────────
   - type: web
-    name: aegisai-backend
+    name: aegis-ai-backend
     runtime: docker
-    plan: starter
-    rootDir: backend
-    dockerfilePath: backend/Dockerfile
-    dockerContext: backend
-    healthCheckPath: /api/health
-    preDeployCommand: alembic upgrade head
-    autoDeployTrigger: commit
-
+    plan: free
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: aegisai-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: aegisai-redis
-          property: connectionString
-      - key: JWT_SECRET
-        generateValue: true
-      # Groq AI Gateway — set the real key in the Render dashboard (Secret File
-      # or env var). NEVER commit the key to the repo or render.yaml.
-      - key: GROQ_API_KEY
         sync: false
-      - key: GROQ_MODEL
-        value: qwen/qwen3.8-27b
-      # gpt-oss-* currently returns empty completions on this key tier —
-      # leave blank unless you have verified a working alternate model.
-      - key: GROQ_FALLBACK_MODEL
-        value: ""
-      - key: GROQ_STT_MODEL
-        value: whisper-large-v3-turbo
-      - key: GROQ_TRANSLATE_MODEL
-        value: allam-2-7b
-      - key: GROQ_MODERATION_MODEL
-        value: meta-llama/llama-prompt-guard-2-86m
-      - key: STT_PROVIDER
-        value: groq
-      - key: WHISPER_MODEL
-        value: base
-      - key: NLP_MODEL_PATH
-        value: models/nlp/v1
-      - key: MAPBOX_ACCESS_TOKEN
+      - key: REDIS_URL
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: MAPBOX_TOKEN
         sync: false
       - key: TWITTER_BEARER_TOKEN
         sync: false
-      # Browser origin for CORS (set to your frontend URL in production).
-      # Leave empty to allow all origins (not recommended for prod).
-      - key: FRONTEND_ORIGIN
+      - key: NASA_API_KEY
         sync: false
-      - key: APP_ENV
-        value: production
-
-  # ── Redis Key-Value Store ─────────────────────────────────────────
-  - type: keyvalue
-    name: aegisai-redis
-    plan: free
-    ipAllowList: []
-
-# ── PostgreSQL Database ──────────────────────────────────────────
-databases:
-  - name: aegisai-db
-    databaseName: aegisai
-    user: aegisai
-    plan: free
+      - key: CORS_ORIGINS
+        value: "*"
+    healthCheckPath: /api/health
