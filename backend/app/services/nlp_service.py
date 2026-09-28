@@ -19,7 +19,10 @@ import re
 from pathlib import Path
 from typing import Optional
 
-import spacy
+try:
+    import spacy
+except ImportError:
+    spacy = None
 import structlog
 from langdetect import detect, LangDetectException
 
@@ -42,10 +45,11 @@ _use_transformer = False
 
 def _get_nlp():
     global _nlp
+    if spacy is None:
+        return None
     if _nlp is None:
         logger.info("Loading spaCy model")
         _nlp = spacy.load("en_core_web_sm")
-        # Add custom entity ruler for known Indian disaster zones / landmarks
         ruler = _nlp.add_pipe("entity_ruler", before="ner")
         patterns = [
             {"label": "GPE", "pattern": "Vadodara"},
@@ -140,6 +144,8 @@ def _transformer_classify(text: str) -> tuple[str, float, bool]:
 def _extract_location(text: str) -> Optional[str]:
     """Use spaCy NER to find the most confident GPE/LOC entity."""
     nlp = _get_nlp()
+    if nlp is None:
+        return None
     doc = nlp(text[:512])  # cap for performance
     locations = [ent.text for ent in doc.ents if ent.label_ in ("GPE", "LOC", "FAC")]
     return locations[0] if locations else None

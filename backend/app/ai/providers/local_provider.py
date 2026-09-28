@@ -159,10 +159,13 @@ class LocalModelProvider(AIModelProvider):
     async def _ner(self, input_data: Any, model_id: str | None, now: str, started: float) -> PredictionResult:
         text = input_data if isinstance(input_data, str) else input_data.get("text", "")
 
-        import spacy
-        nlp = spacy.load("en_core_web_sm")
-        doc = nlp(text[:512])
-        entities = [{"entity": ent.label_, "text": ent.text} for ent in doc.ents]
+        try:
+            import spacy
+            nlp = spacy.load("en_core_web_sm")
+            doc = nlp(text[:512])
+            entities = [{"entity": ent.label_, "text": ent.text} for ent in doc.ents]
+        except ImportError:
+            entities = []
 
         return PredictionResult(
             prediction=entities,
