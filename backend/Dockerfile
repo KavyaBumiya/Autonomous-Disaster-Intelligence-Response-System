@@ -20,7 +20,6 @@ RUN mkdir -p /app/media/audio
 RUN useradd -m -r aegis && chown -R aegis:aegis /app
 USER aegis
 
-ENV PORT=8000
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
