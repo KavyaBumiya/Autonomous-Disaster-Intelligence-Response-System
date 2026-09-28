@@ -35,8 +35,6 @@ httpx>=0.28.0                 # external APIs + NVIDIA NIM chat completions
 transformers==4.40.2
 torch>=2.0.0
 torchvision>=0.15.0
-spacy==3.7.4
-# spaCy English model installed via Dockerfile: python -m spacy download en_core_web_sm
 langdetect==1.0.9
 
 # ── Deduplication ─────────────────────────────────────────────

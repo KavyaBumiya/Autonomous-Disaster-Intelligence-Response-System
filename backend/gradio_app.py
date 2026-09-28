@@ -10,9 +10,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 import gradio as gr
 import spaces
 import socketio
-from app.ai.nlp.disaster_nlp import get_disaster_nlp
 from app.ai.providers.base import TaskType
 from app.ai.router.model_router import get_model_router
+
+try:
+    from app.ai.nlp.disaster_nlp import get_disaster_nlp
+except ImportError:
+    get_disaster_nlp = None
 from app.main import app as fastapi_app
 from app.services.websocket import sio
 
@@ -35,6 +39,8 @@ def _get_router():
 
 
 async def analyze_report(text: str) -> str:
+    if get_disaster_nlp is None:
+        return "NLP module not available in this deployment"
     try:
         nlp = _get_nlp()
         result = await nlp.analyze(text)
@@ -53,6 +59,8 @@ async def classify_hazard(text: str) -> str:
 
 
 async def summarize(text: str) -> str:
+    if get_disaster_nlp is None:
+        return "NLP module not available in this deployment"
     try:
         nlp = _get_nlp()
         result = await nlp.summarize(text)
