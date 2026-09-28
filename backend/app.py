@@ -82,4 +82,14 @@ def create_demo():
     return demo
 
 demo = create_demo()
-gr.mount_gradio_app(fastapi_app, demo, path="/")
+
+from app.services.websocket import sio as _sio
+import socketio as _socketio
+
+fastapi_app.router.lifespan_context = None
+_socket_wrapper = _socketio.ASGIApp(_sio, other_asgi_app=fastapi_app)
+
+import gradio as _gr
+_gr.mount_gradio_app(fastapi_app, demo, path="/gradio")
+
+app = _socket_wrapper
