@@ -5,6 +5,7 @@ Fetches events from the last 30 minutes with magnitude >= 3.0.
 HTTP/retry handled by UsgsConnector (Phase 6); normalization per §14 via
 EarthquakeObservation.from_feature (Phase 7).
 """
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -14,6 +15,7 @@ from app.core.database import AsyncSessionLocal
 from app.integrations.base import ConnectorError
 from app.integrations.seismic.usgs import UsgsConnector
 from app.models.seismic import SeismicEvent
+from app.pollers import log_poller_cancelled
 from app.schemas.observations import EarthquakeObservation
 from sqlalchemy import select
 
@@ -24,6 +26,17 @@ async def poll_seismic(
     minutes: int = 30, min_magnitude: float = 3.0, limit: int = 50
 ) -> None:
     """Poll USGS for recent seismic events and store new ones."""
+    try:
+        await _poll_seismic_inner(minutes, min_magnitude, limit)
+    except asyncio.CancelledError:
+        # Shutdown cancelled this run mid provider read; expected, not a fault.
+        log_poller_cancelled("seismic")
+        raise
+
+
+async def _poll_seismic_inner(
+    minutes: int, min_magnitude: float, limit: int
+) -> None:
     try:
         data = await UsgsConnector().recent_events(
             minutes=minutes, min_magnitude=min_magnitude, limit=limit

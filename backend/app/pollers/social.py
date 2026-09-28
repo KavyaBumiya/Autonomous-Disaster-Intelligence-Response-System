@@ -3,6 +3,7 @@ Social media poller — Twitter v2 + Mastodon fallback.
 Runs every SOCIAL_POLL_INTERVAL_SECONDS (default 60s).
 Classifies posts via NLP, deduplicates, stores informative ones as reports.
 """
+import asyncio
 import hashlib
 import uuid
 from datetime import datetime, timezone
@@ -11,9 +12,12 @@ import structlog
 
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
+from app.integrations import cache
 from app.models.report import Report
 from app.models.social_poll import SocialMediaPoll
+from app.pollers import log_poller_cancelled
 from app.services import nlp_service, deduplication, gis_service
+from sqlalchemy import select
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -27,24 +31,50 @@ def _anon_reporter_id(post_id: str) -> str:
 
 _PLACEHOLDER_TOKENS = {"", "your_twitter_bearer_token_here", "your_token_here", "changeme", "change_me"}
 
+# How long a since_id watermark is kept. Comfortably longer than any gap in
+# polling, so a brief outage does not replay the whole recent window, but short
+# enough that a very stale cursor cannot hide genuinely new posts indefinitely.
+CURSOR_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _cursor_key(hashtag: str) -> str:
+    return f"social:cursor:{hashtag.lstrip('#').lower()}"
+
 
 async def _fetch_twitter(hashtag: str) -> list[dict]:
-    """Fetch recent tweets for a hashtag using Twitter API v2."""
+    """Fetch tweets newer than the stored cursor for a hashtag (Twitter API v2).
+
+    Twitter's `search_recent_tweets` has no server-side time filter, so without a
+    cursor every cycle re-downloads the same most-recent window and the poller
+    re-processes posts it already has. Tweet snowflake IDs are monotonically
+    increasing, so the highest ID seen is an exact `since_id` watermark.
+
+    The cursor lives in Redis, so it survives a process restart and a deploy
+    rather than resetting to "everything is new" on every boot.
+    """
     if settings.twitter_bearer_token.strip().lower() in _PLACEHOLDER_TOKENS:
         return []
     try:
         import tweepy
         client = tweepy.AsyncClient(bearer_token=settings.twitter_bearer_token)
         query = f"{hashtag} -is:retweet lang:en"
+
+        since_id = await cache.cache_get(_cursor_key(hashtag))
+        kwargs: dict = {}
+        if since_id:
+            kwargs["since_id"] = str(since_id)
+
         response = await client.search_recent_tweets(
             query=query,
             max_results=10,
             tweet_fields=["id", "text", "created_at", "geo", "author_id"],
             expansions=["geo.place_id"],
+            **kwargs,
         )
         if not response.data:
             return []
-        return [
+
+        posts = [
             {
                 "id": str(tweet.id),
                 "text": tweet.text,
@@ -53,6 +83,12 @@ async def _fetch_twitter(hashtag: str) -> list[dict]:
             }
             for tweet in response.data
         ]
+
+        # Advance the watermark only past what we actually retrieved.
+        newest = max(int(p["id"]) for p in posts)
+        if not since_id or newest > int(since_id):
+            await cache.cache_set(_cursor_key(hashtag), str(newest), CURSOR_TTL_SECONDS)
+        return posts
     except Exception as e:
         logger.warning("Twitter fetch failed", hashtag=hashtag, error=str(e))
         return []
@@ -103,6 +139,17 @@ async def _process_post(post: dict, db) -> bool:
 
     post_id = post["id"]
 
+    # Durable, restart-safe exact-ID check. The MinHash index in
+    # deduplication is in-process only, so on its own a restart forgets every
+    # post and re-inserts the same ones. The database is the authority on
+    # "have we already stored this exact post".
+    already = await db.execute(
+        select(Report.id).where(Report.social_post_id == post_id).limit(1)
+    )
+    if already.first() is not None:
+        logger.debug("social_post_already_stored", post_id=post_id)
+        return False
+
     # Deduplicate
     if deduplication.is_duplicate(text, post_id):
         return False
@@ -146,6 +193,15 @@ async def _process_post(post: dict, db) -> bool:
 
 async def poll_social() -> None:
     """Main social media poll cycle — iterates all configured hashtags."""
+    try:
+        await _poll_social_inner()
+    except asyncio.CancelledError:
+        # Shutdown cancelled this cycle mid provider read; expected, not a fault.
+        log_poller_cancelled("social")
+        raise
+
+
+async def _poll_social_inner() -> None:
     provider = settings.social_provider
     hashtags = settings.social_hashtag_list
 

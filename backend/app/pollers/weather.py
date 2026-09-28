@@ -10,6 +10,7 @@ owner, Redis-cached, connector-level retry). Two live bugs fixed:
 Provider failures: zone is skipped (existing behavior); the connector
 registry marks open-meteo DEGRADED/OFFLINE for /api/health (§31).
 """
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -20,6 +21,7 @@ from app.core.database import AsyncSessionLocal
 from app.integrations.base import ConnectorError
 from app.models.weather import WeatherReading
 from app.models.zone import Zone
+from app.pollers import log_poller_cancelled
 from app.services.weather_service import weather_service
 
 logger = structlog.get_logger()
@@ -63,6 +65,17 @@ async def poll_weather() -> None:
 
     Emits `weather.updated` (§25) only when a zone's risk score actually
     changed since its previous reading — throttled by design."""
+    try:
+        await _poll_weather_inner()
+    except asyncio.CancelledError:
+        # App shutdown cancelled this run (usually mid provider read or Redis
+        # GET). Expected, not a provider fault — log and re-raise so task
+        # cancellation semantics stay intact.
+        log_poller_cancelled("weather")
+        raise
+
+
+async def _poll_weather_inner() -> None:
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Zone))
         zones = result.scalars().all()

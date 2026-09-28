@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
@@ -195,7 +196,6 @@ app.router.route_class = GetWithHeadRoute
 async def unhandled_exception_handler(request, exc):
     """Never return a bare 500 body — log and return JSON."""
     logger.exception("Unhandled error", path=str(request.url.path), error=str(exc))
-    from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=500,
         content={
@@ -230,6 +230,9 @@ app.add_middleware(
     # Set it to the console's deployed origin(s) to lock cross-origin access
     # down to your own frontend.
     allow_origins=settings.cors_origins,
+    # Development-only pattern that also admits a Vite server that moved off
+    # 5173, so REST and the Socket.IO handshake accept the same origins.
+    allow_origin_regex=settings.cors_origin_regex,
     # Only with explicit origins: a wildcard origin cannot legally be combined
     # with credentials. The demo authenticates with bearer tokens, so a wildcard
     # origin still works for it.
@@ -320,6 +323,37 @@ async def _probe_cache() -> str:
     except Exception as exc:  # noqa: BLE001
         logger.warning("health_cache_probe_failed", error=str(exc))
         return "DEGRADED"
+
+
+@app.get("/healthz", include_in_schema=False)
+async def healthz():
+    """Cheap process liveness.
+
+    Touches no database, cache or provider, so it answers in milliseconds and
+    cannot fail for an unrelated reason. This is what a container platform
+    should poll: a transient database blip must not make the platform consider
+    the process dead and restart it.
+
+    `/readyz` covers "can serve traffic" and `/api/health` the detailed
+    operational picture. The three are deliberately distinct.
+    """
+    return {"status": "ok"}
+
+
+@app.get("/readyz", include_in_schema=False)
+async def readyz():
+    """Readiness: the process is up AND the database is reachable.
+
+    Returns 503 when the database is not, so a load balancer or orchestrator can
+    hold traffic back until the app can actually serve it. The cache is
+    optimisation only and never blocks readiness.
+    """
+    db_status = await _probe_database()
+    ready = db_status == "ONLINE"
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={"status": "ready" if ready else "not_ready", "database": db_status},
+    )
 
 
 @app.get("/api/health", tags=["health"])

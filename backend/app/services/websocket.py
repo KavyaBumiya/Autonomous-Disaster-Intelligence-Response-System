@@ -15,9 +15,14 @@ logger = structlog.get_logger()
 # Async Socket.IO server. Origins mirror the REST CORS policy so the console can
 # be deployed on a different host than the API: FRONTEND_ORIGIN (comma-separated)
 # restricts both, and an empty value keeps the permissive local-demo default.
+# `is_origin_allowed` is a callable because engineio otherwise compares the
+# Origin header verbatim against a list, which cannot express "any loopback port
+# in development" — the case that breaks the handshake when Vite auto-increments
+# from 5173 to 5174.
+_settings = get_settings()
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins=get_settings().cors_origins,
+    cors_allowed_origins=_settings.is_origin_allowed,
     logger=False,
     engineio_logger=False,
 )

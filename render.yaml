@@ -5,7 +5,12 @@ services:
     plan: free
     # The Dockerfile lives in backend/, not the repo root.
     rootDir: backend
-    healthCheckPath: /api/health
+    # Cheap process liveness only. It touches no database, cache or provider, so
+    # a transient DB blip cannot mark the service unhealthy and trigger a restart.
+    # `/readyz` (database readiness) and `/api/health` (detailed provider status)
+    # are intentionally separate — polling the detailed endpoint for liveness
+    # would make every provider hiccup look like a dead process.
+    healthCheckPath: /healthz
     envVars:
       # ── Required ──────────────────────────────────────────────
       - key: DATABASE_URL

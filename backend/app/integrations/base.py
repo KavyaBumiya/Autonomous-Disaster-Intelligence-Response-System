@@ -3,7 +3,8 @@ BaseConnector — shared contract for every external provider (PRD §4).
 
 Guarantees for all connectors:
     * async HTTP via httpx with a hard timeout
-    * retry policy: exponential backoff (1s → 2s → 4s, capped 10s)
+    * retry policy: exponential backoff with jitter (1s → 2s → 4s, capped 10s),
+      honouring a provider Retry-After header when one is sent
       retryable = network errors, timeouts, HTTP 429, HTTP 5xx
       non-retryable = other HTTP 4xx (fail fast)
     * responses validated before returning; failures raised as ConnectorError
@@ -20,6 +21,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 from typing import Any
 
@@ -44,12 +46,44 @@ class ConnectorError(Exception):
         *,
         status_code: int | None = None,
         retryable: bool = True,
+        retry_after: float | None = None,
     ) -> None:
         self.provider = provider
         self.message = message
         self.status_code = status_code
         self.retryable = retryable
+        # Seconds the provider asked us to wait (Retry-After), when it sent one.
+        self.retry_after = retry_after
         super().__init__(f"{provider}: {message}")
+
+
+def _parse_retry_after(headers: Any) -> float | None:
+    """Read a Retry-After header into seconds.
+
+    Supports both forms RFC 9110 allows: delta-seconds and an HTTP-date. Dates
+    are resolved against wall-clock time; anything unparseable is ignored so a
+    malformed header can never wedge the retry loop.
+    """
+    if headers is None:
+        return None
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(str(raw).strip()))
+    except (TypeError, ValueError):
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        from datetime import datetime, timezone
+
+        when = parsedate_to_datetime(str(raw))
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        delta = (when - datetime.now(timezone.utc)).total_seconds()
+        return max(0.0, delta)
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 class BaseConnector:
@@ -139,6 +173,7 @@ class BaseConnector:
                         f"HTTP {resp.status_code}",
                         status_code=resp.status_code,
                         retryable=True,
+                        retry_after=_parse_retry_after(resp.headers),
                     )
                 elif resp.status_code >= 400:
                     error = ConnectorError(
@@ -197,6 +232,15 @@ class BaseConnector:
             assert error is not None
             if not error.retryable or attempt >= self.max_attempts:
                 break
+            # Prefer the provider's own Retry-After over our schedule, but keep it
+            # bounded so a hostile or mistaken header cannot stall the poller.
+            wait = error.retry_after if error.retry_after is not None else delay
+            wait = min(max(wait, 0.0), self.backoff_max_seconds)
+            # Jitter spreads concurrent callers out instead of letting them retry
+            # in lockstep. Without it, every zone's poller and every retryable API
+            # request fires at the same instant, which is what turns a provider's
+            # 429 into a self-sustaining retry storm.
+            wait = wait * (0.5 + random.random() * 0.5)
             logger.warning(
                 "connector_retry",
                 provider=self.provider,
@@ -204,9 +248,10 @@ class BaseConnector:
                 path=path,
                 attempt=attempt,
                 error=error.message,
-                next_delay_s=delay,
+                next_delay_s=round(wait, 2),
+                retry_after=error.retry_after,
             )
-            await asyncio.sleep(delay)
+            await asyncio.sleep(wait)
             delay = min(delay * 2, self.backoff_max_seconds)
 
         total_ms = (time.perf_counter() - started) * 1000

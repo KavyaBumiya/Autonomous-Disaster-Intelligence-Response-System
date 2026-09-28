@@ -77,5 +77,10 @@ async def start_scheduler() -> None:
 async def stop_scheduler() -> None:
     global _scheduler
     if _scheduler and _scheduler.running:
-        _scheduler.shutdown(wait=False)
+        # wait=True lets an in-flight poller finish instead of cancelling it
+        # mid-request. Every connector has a hard timeout, so the wait is
+        # bounded; without it APScheduler cancels the job, the CancelledError
+        # surfaces from inside an httpx read, and the executor logs a spurious
+        # provider-failure ERROR on every ordinary shutdown.
+        _scheduler.shutdown(wait=True)
         logger.info("Scheduler stopped")

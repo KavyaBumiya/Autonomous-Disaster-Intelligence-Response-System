@@ -147,7 +147,3 @@ export function subscribeLiveFeed(
     }
   };
 }
-/** True when a live connection is currently established. */
-export function isLiveFeedConnected(): boolean {
-  return Boolean(socket?.connected);
-}

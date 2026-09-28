@@ -24,6 +24,11 @@ interface LiveMapCanvasProps {
   mapLayer: string;
   markers?: MarkerData[];
   freshness?: string;
+  /**
+   * The selected operational zone. This is the single source of truth for the
+   * map centre, so every call site must pass it; omitting it makes the map fall
+   * back to a default that can contradict the selected zone shown elsewhere.
+   */
   zone?: Zone | null;
   incidents?: Incident[] | null;
   reports?: Report[] | null;
@@ -32,7 +37,13 @@ interface LiveMapCanvasProps {
   visibility?: Partial<MapVisibility>;
 }
 
-const CENTER: [number, number] = [72.5714, 23.0225];
+/**
+ * Last-resort centre used only when there is no selected zone and no mapped data
+ * to derive one from. Deliberately not a real operational location: it is a
+ * neutral Gujarat default so an empty map has somewhere to sit, and it is never
+ * preferred over zone or data-derived coordinates.
+ */
+const FALLBACK_CENTER: [number, number] = [72.5714, 23.0225];
 
 const DEFAULT_VISIBILITY: MapVisibility = {
   floodExtent: true,
@@ -85,30 +96,66 @@ export default function LiveMapCanvas({
   const markerRefs = useRef<mapboxgl.Marker[]>([]);
   const vis = { ...DEFAULT_VISIBILITY, ...(visibility ?? {}) };
 
+  // Type guards, not plain filters: the runtime check is what makes these points
+  // safe to average, so the compiler has to see the narrowing too.
+  const hasCoords = (p: { lat: number | null; lng: number | null }): p is { lat: number; lng: number } =>
+    p.lat !== null && p.lng !== null;
+
   const teamPoints = useMemo(
-    () => (resources ?? []).filter((r) => r.resource_type === "team" && r.lat !== null && r.lng !== null),
+    () => (resources ?? []).filter((r) => r.resource_type === "team").filter(hasCoords),
     [resources],
   );
   const shelterPoints = useMemo(
-    () => (resources ?? []).filter((r) => r.resource_type === "shelter" && r.lat !== null && r.lng !== null),
+    () => (resources ?? []).filter((r) => r.resource_type === "shelter").filter(hasCoords),
     [resources],
   );
-  const reportPoints = useMemo(
-    () => (reports ?? []).filter((r) => r.lat !== null && r.lng !== null),
-    [reports],
-  );
-  const incidentPoints = useMemo(
-    () => (incidents ?? []).filter((r) => r.lat !== null && r.lng !== null),
-    [incidents],
-  );
+  const reportPoints = useMemo(() => (reports ?? []).filter(hasCoords), [reports]);
+  const incidentPoints = useMemo(() => (incidents ?? []).filter(hasCoords), [incidents]);
+
+  /**
+   * Every mappable operational coordinate as a plain [lng, lat] list.
+   *
+   * Built here rather than by spreading the typed point arrays, because those
+   * carry nullable lat/lng and the centre average needs definite numbers.
+   */
+  const allCoords = useMemo(() => {
+    const out: Array<[number, number]> = [];
+    for (const p of [...(resources ?? []), ...(reports ?? []), ...(incidents ?? [])]) {
+      if (p.lat !== null && p.lat !== undefined && p.lng !== null && p.lng !== undefined) {
+        out.push([p.lng, p.lat]);
+      }
+    }
+    return out;
+  }, [resources, reports, incidents]);
+
+  /**
+   * Resolve the map centre, in priority order:
+   *   1. the selected zone centroid
+   *   2. the centroid of whatever operational points are loaded
+   *   3. a neutral fallback for a genuinely empty map
+   *
+   * Deriving from loaded data means a page that forgets to pass `zone` still
+   * frames the incident it is actually showing, instead of parking the viewport
+   * over an unrelated city. Held as primitives so the re-frame effect below
+   * fires on a real coordinate change rather than on every poll tick.
+   */
+  const centerLng = useMemo(() => {
+    if (zone) return zone.centroid_lng;
+    if (allCoords.length === 0) return FALLBACK_CENTER[0];
+    return allCoords.reduce((sum, c) => sum + c[0], 0) / allCoords.length;
+  }, [zone?.centroid_lng, allCoords]);
+
+  const centerLat = useMemo(() => {
+    if (zone) return zone.centroid_lat;
+    if (allCoords.length === 0) return FALLBACK_CENTER[1];
+    return allCoords.reduce((sum, c) => sum + c[1], 0) / allCoords.length;
+  }, [zone?.centroid_lat, allCoords]);
 
   useEffect(() => {
     if (!MAPBOX_TOKEN || !containerRef.current) return;
 
     mapboxgl.accessToken = MAPBOX_TOKEN;
-    const initialCenter: [number, number] = zone
-      ? [zone.centroid_lng, zone.centroid_lat]
-      : CENTER;
+    const initialCenter: [number, number] = [centerLng, centerLat];
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
@@ -229,9 +276,12 @@ export default function LiveMapCanvas({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !zone) return;
-    map.easeTo({ center: [zone.centroid_lng, zone.centroid_lat], duration: 700 });
-  }, [zone?.zone_id, zone?.centroid_lat, zone?.centroid_lng]);
+    if (!map) return;
+    // Re-frame whenever the operational centre changes, whether that came from a
+    // zone selection or from data arriving on a page that does not pass one.
+    // This is what stops the viewport drifting away from the selected operation.
+    map.easeTo({ center: [centerLng, centerLat], duration: 700 });
+  }, [centerLng, centerLat]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -243,13 +293,16 @@ export default function LiveMapCanvas({
     markers.forEach((marker) => {
       const el = markerElement(marker.c);
       const popup = new mapboxgl.Popup({ offset: 18 }).setText(marker.label);
-      // Preserve the legacy Ahmedabad projection used by the overview card.
-      const lng = CENTER[0] + (marker.x - 450) * (0.45 / 900);
-      const lat = CENTER[1] - (marker.y - 260) * (0.26 / 520);
+      // The legacy pins are authored in a synthetic 900x520 space. Anchor them to
+      // whichever centre the map is actually using, so they stay with the
+      // selected zone instead of being pinned to a hardcoded Ahmedabad offset.
+      const [anchorLng, anchorLat] = [centerLng, centerLat];
+      const lng = anchorLng + (marker.x - 450) * (0.45 / 900);
+      const lat = anchorLat - (marker.y - 260) * (0.26 / 520);
       const m = new mapboxgl.Marker({ element: el }).setLngLat([lng, lat]).setPopup(popup).addTo(map);
       markerRefs.current.push(m);
     });
-  }, [markers]);
+  }, [markers, centerLng, centerLat]);
 
   if (!MAPBOX_TOKEN) {
     return (

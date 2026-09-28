@@ -11,6 +11,7 @@ when a tracked event moves (storms) or gains/loses closure info.
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -21,6 +22,7 @@ from app.core.database import AsyncSessionLocal
 from app.integrations.base import ConnectorError
 from app.integrations.nasa.eonet import EonetConnector, normalize_event
 from app.models.external import ExternalObservation
+from app.pollers import log_poller_cancelled
 
 logger = structlog.get_logger()
 
@@ -32,6 +34,15 @@ async def poll_eonet(limit: int = 200) -> int:
     """Fetch open EONET events, upsert normalized rows. Returns rows
     inserted+updated (0 = nothing new or provider unavailable — never
     fabricated, §7)."""
+    try:
+        return await _poll_eonet_inner(limit)
+    except asyncio.CancelledError:
+        # Shutdown cancelled this run mid provider read; expected, not a fault.
+        log_poller_cancelled("eonet")
+        raise
+
+
+async def _poll_eonet_inner(limit: int) -> int:
     try:
         data = await EonetConnector().events(status="open", limit=limit)
     except ConnectorError as exc:

@@ -20,9 +20,13 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 5173,
+      // No strictPort: Vite may fall back to 5174+ when 5173 is busy. That is
+      // safe because the API accepts any loopback origin in development, so an
+      // auto-incremented port does not break the Socket.IO handshake.
       proxy: useDevProxy ? {
         "/api": { target, changeOrigin: true },
-        // Socket.IO long-polling handshake and upgrade.
+        // Socket.IO long-polling handshake and upgrade. The browser's Origin is
+        // this dev server's origin, which the API validates in development.
         "/socket.io": { target, changeOrigin: true, ws: true },
       } : undefined,
     },

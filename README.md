@@ -1,4 +1,4 @@
-# AEGIS-AI
+﻿# AEGIS-AI
 
 > Autonomous Emergency & Geospatial Intelligence System  
 > Multi-modal disaster intelligence pipeline: voice reports, social media ingestion, transformer NLP, trust scoring, real-time WebSocket dashboard.
@@ -9,35 +9,34 @@
 
 ```
 AEGIS-AI/
-├── backend/                     # FastAPI + Python backend
-│   ├── app/
-│   │   ├── main.py              # FastAPI app + Socket.IO mount
-│   │   ├── core/                # Core configuration & database
-│   │   │   ├── config.py        # Settings (pydantic-settings)
-│   │   │   ├── database.py      # Async SQLAlchemy engine + session
-│   │   │   └── apis_config.py   # External API configurations
-│   │   ├── models/              # SQLAlchemy ORM models
-│   │   ├── schemas/             # Pydantic request/response schemas
-│   │   ├── api/                 # Route handlers (reports, incidents, zones, auth…)
-│   │   ├── services/            # Whisper STT, NLP, geocoding, deduplication, WebSocket
-│   │   ├── agents/              # Detection, verification, orchestrator agents
-│   │   ├── engine/              # Decision engine + XAI, prediction engine, resource commander
-│   │   ├── pollers/             # Weather, seismic, social media pollers
-│   │   ├── auth/                # JWT tokens + role-based dependencies
-│   │   └── utils/               # Utility functions
-│   ├── alembic/                 # Database migrations
-│   ├── tests/                   # Backend tests
-│   ├── seed.py                  # Demo data seeder
-│   ├── requirements.txt
-│   └── Dockerfile
-├── scripts/                     # Utility scripts
-│   └── download.sh              # Downloads fine-tuned NLP model weights
-├── docs/                        # Project documentation & PRDs
-│   └── architecture/            # Architecture documentation
-├── docker-compose.yml
-├── .env.example
-├── .gitignore
-└── README.md
+â”œâ”€â”€ backend/                     # FastAPI + Python backend
+â”‚   â”œâ”€â”€ app/
+â”‚   â”‚   â”œâ”€â”€ main.py              # FastAPI app + Socket.IO mount
+â”‚   â”‚   â”œâ”€â”€ core/                # Core configuration & database
+â”‚   â”‚   â”‚   â”œâ”€â”€ config.py        # Settings (pydantic-settings)
+â”‚   â”‚   â”‚   â”œâ”€â”€ database.py      # Async SQLAlchemy engine + session
+â”‚   â”‚   â”‚   â””â”€â”€ apis_config.py   # External API configurations
+â”‚   â”‚   â”œâ”€â”€ models/              # SQLAlchemy ORM models
+â”‚   â”‚   â”œâ”€â”€ schemas/             # Pydantic request/response schemas
+â”‚   â”‚   â”œâ”€â”€ api/                 # Route handlers (reports, incidents, zones, authâ€¦)
+â”‚   â”‚   â”œâ”€â”€ services/            # Whisper STT, NLP, geocoding, deduplication, WebSocket
+â”‚   â”‚   â”œâ”€â”€ agents/              # Detection, verification, orchestrator agents
+â”‚   â”‚   â”œâ”€â”€ engine/              # Decision engine + XAI, prediction engine, resource commander
+â”‚   â”‚   â”œâ”€â”€ pollers/             # Weather, seismic, social media pollers
+â”‚   â”‚   â”œâ”€â”€ auth/                # JWT tokens + role-based dependencies
+â”‚   â”‚   â””â”€â”€ utils/               # Utility functions
+â”‚   â”œâ”€â”€ alembic/                 # Database migrations
+â”‚   â”œâ”€â”€ tests/                   # Backend tests
+â”‚   â”œâ”€â”€ requirements.txt
+â”‚   â””â”€â”€ Dockerfile
+â”œâ”€â”€ scripts/                     # Utility scripts
+â”‚   â””â”€â”€ download.sh              # Downloads fine-tuned NLP model weights
+â”œâ”€â”€ docs/                        # Project documentation & PRDs
+â”‚   â””â”€â”€ architecture/            # Architecture documentation
+â”œâ”€â”€ docker-compose.yml
+â”œâ”€â”€ .env.example
+â”œâ”€â”€ .gitignore
+â””â”€â”€ README.md
 ```
 
 ---
@@ -100,16 +99,23 @@ docker-compose up --build
 cd backend
 pip install -r requirements.txt
 alembic upgrade head
-python seed.py
-uvicorn app.main:app --reload --port 8000
+# Schema bootstrap (create_all + column reconcile + alembic stamp) runs on
+# startup, so there is no separate seed step.
+# socket_app, not app: it mounts the Socket.IO ASGI app alongside the REST API.
+uvicorn app.main:socket_app --reload --port 8000
 ```
 
 > No frontend step: the operator UI lives outside this repository.
 
 ---
 
-## Resetting Demo Data
+## Health Endpoints
 
-```bash
-docker-compose exec backend python seed.py --reset
-```
+| Endpoint | Purpose | Touches dependencies |
+| --- | --- | --- |
+| `/healthz` | Process liveness â€” what the platform should poll | No |
+| `/readyz` | Readiness: process up **and** database reachable (503 if not) | Database |
+| `/api/health` | Detailed operational status: providers, database, cache | Database + cache |
+
+Use `/healthz` for container liveness so a transient database blip cannot make
+the platform restart a healthy process.

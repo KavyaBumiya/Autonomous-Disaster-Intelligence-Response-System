@@ -844,16 +844,27 @@ export function toFeedHealth(
   const isNominal = health.status === "ok" && services.database === "ONLINE";
   const isStreamNominal = isNominal && liveFeedStatus === "connected";
 
+  // A provider that is not ONLINE is a real degradation even when the API and
+  // the socket are fine, so it is surfaced separately from transport health.
+  // UNKNOWN means "never called yet" (e.g. AI before its first query) and is
+  // not treated as a fault.
+  const providerDegraded = entries.some((p) => {
+    const status = p.status;
+    return status !== undefined && status !== "ONLINE" && status !== "UNKNOWN";
+  });
+
   // Only an established socket earns the word "healthy". A pending handshake is
   // reported as connecting rather than degraded, so a normal page load does not
   // flash a false outage.
   const statusLabel = !isNominal
     ? "Data stream degraded"
-    : liveFeedStatus === "connected"
-      ? "Data stream healthy"
-      : liveFeedStatus === "connecting"
-        ? "Data stream connecting"
-        : "Live feed offline";
+    : liveFeedStatus === "connecting"
+      ? "Data stream connecting"
+      : liveFeedStatus === "disconnected"
+        ? "Live feed offline"
+        : providerDegraded
+          ? "Data stream degraded"
+          : "Data stream healthy";
 
   return {
     statusLabel,
@@ -862,7 +873,7 @@ export function toFeedHealth(
     sourceCount: canonical || entries.length,
     healthyFeeds: healthy,
     isNominal,
-    isStreamNominal,
+    isStreamNominal: isStreamNominal && !providerDegraded,
   };
 }
 

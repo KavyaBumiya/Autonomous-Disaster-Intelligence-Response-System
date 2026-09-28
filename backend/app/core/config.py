@@ -6,6 +6,7 @@ The NVIDIA_API_KEY is loaded here and never serialised into any HTTP response.
 """
 from functools import lru_cache
 from pathlib import Path
+import re
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -180,6 +181,47 @@ class Settings(BaseSettings):
             return ["*"]
         origins = [o.strip() for o in raw.split(",") if o.strip()]
         return origins or ["*"]
+
+    @property
+    def is_development(self) -> bool:
+        return (self.app_env or "").strip().lower() in {"dev", "development", "local"}
+
+    @property
+    def cors_origin_regex(self) -> str | None:
+        """Extra origin pattern for local dev servers.
+
+        Vite claims 5173 but silently falls back to 5174+ when that port is busy,
+        and the browser then sends an Origin the API does not recognise, breaking
+        the Socket.IO handshake. During development any loopback port is accepted
+        so an auto-incremented port cannot break the console. This is scoped to
+        development on purpose: production keeps the explicit FRONTEND_ORIGIN
+        allowlist and no pattern matching.
+        """
+        if not self.is_development:
+            return None
+        return r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+
+    def is_origin_allowed(self, origin: str | None) -> bool:
+        """Single origin check shared by REST CORS and the Socket.IO handshake.
+
+        Used as the `cors_allowed_origins` callable for python-socketio, whose
+        engine compares the Origin header verbatim against a list, and mirrored by
+        `cors_origin_regex` for Starlette's CORSMiddleware. Keeping both derived
+        from here stops the REST API and the socket from disagreeing about which
+        browsers are allowed in.
+        """
+        if not origin:
+            # Non-browser clients (curl, health checks, the e2e smoke test) send
+            # no Origin. There is no cross-origin risk to police, so allow it.
+            return True
+        if "*" in self.cors_origins:
+            return True
+        if origin in self.cors_origins:
+            return True
+        pattern = self.cors_origin_regex
+        if pattern and re.match(pattern, origin):
+            return True
+        return False
 
     @property
     def cors_allow_credentials(self) -> bool:
