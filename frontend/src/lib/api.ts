@@ -15,18 +15,21 @@ import {
   apiUrl,
 } from "./config";
 import type {
-  ActionUpdateResponse,
   ApprovalQueueResponse,
   AssignResourcesResponse,
   AvailableResourcesResponse,
   CommandHealthResponse,
   CommandResponse,
+  DecisionApproveResponse,
+  DecisionRecommendResponse,
   CriticalResponse,
   ExplainResponse,
   HealthResponse,
   Incident,
   IncidentListResponse,
   PredictionsResponse,
+  ReportListResponse,
+  Resource,
   ResourceListResponse,
   ResourceType,
   RoutesResponse,
@@ -128,7 +131,8 @@ export async function request<T>(
   const { signal: effectiveSignal, cleanup } = withTimeout(timeoutMs, signal);
 
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const isFormDataBody = typeof FormData !== "undefined" && body instanceof FormData;
+  if (body !== undefined && !isFormDataBody) headers["Content-Type"] = "application/json";
   const token = readToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -136,7 +140,7 @@ export async function request<T>(
     const response = await fetch(apiUrl(path), {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isFormDataBody ? body as FormData : JSON.stringify(body),
       signal: effectiveSignal,
       mode: "cors",
       credentials: "omit",
@@ -208,6 +212,15 @@ export const api = {
   incident: (incidentId: string, signal?: AbortSignal) =>
     request<Incident>(`/api/incidents/${encodeURIComponent(incidentId)}`, { signal }),
 
+  reports: (
+    params: { zoneId?: string; limit?: number; minTrust?: number } = {},
+    signal?: AbortSignal,
+  ) =>
+    request<ReportListResponse>(
+      `/api/reports${query({ zone_id: params.zoneId, limit: params.limit ?? 100, min_trust: params.minTrust ?? 0.25 })}`,
+      { signal },
+    ),
+
   critical: (threshold = 70, limit = 10, signal?: AbortSignal) =>
     request<CriticalResponse>(`/api/command/critical${query({ threshold, limit })}`, { signal }),
 
@@ -231,6 +244,22 @@ export const api = {
       { signal },
     ),
 
+  registerResource: (body: {
+    name: string;
+    resource_type: ResourceType;
+    capacity?: number;
+    lat?: number | null;
+    lng?: number | null;
+  }, signal?: AbortSignal) => {
+    const form = new FormData();
+    form.set("name", body.name);
+    form.set("resource_type", body.resource_type);
+    form.set("capacity", String(body.capacity ?? 1));
+    if (body.lat !== undefined && body.lat !== null) form.set("lat", String(body.lat));
+    if (body.lng !== undefined && body.lng !== null) form.set("lng", String(body.lng));
+    return request<Resource>("/api/resources", { method: "POST", body: form, signal });
+  },
+
   availableResources: (signal?: AbortSignal) =>
     request<AvailableResourcesResponse>("/api/command/resources/available", { signal }),
 
@@ -245,18 +274,7 @@ export const api = {
       { method: "POST", signal, timeoutMs: 45_000 },
     ),
 
-  /** Commander decision on a pending action. */
-  updateAction: (
-    actionId: string,
-    status: "approved" | "rejected",
-    note?: string,
-    signal?: AbortSignal,
-  ) =>
-    request<ActionUpdateResponse>(`/api/actions/${encodeURIComponent(actionId)}`, {
-      method: "PATCH",
-      body: { status, note: note ?? null },
-      signal,
-    }),
+
 
   // ── Predictions & routes ────────────────────────────────────────────────
   predictions: (zoneId: string, signal?: AbortSignal) =>
@@ -280,6 +298,37 @@ export const api = {
       body,
       signal,
       timeoutMs: 45_000,
+    }),
+
+  // ── Decision & approval ────────────────────────────────────────────────
+  decisionRecommend: (body: {
+    incident_id: string;
+    action_type: "evacuation" | "dispatch" | "resource_allocation" | "emergency_communication" | "rescue";
+    context?: Record<string, unknown>;
+    hazard_type?: string | null;
+    location?: { lat?: number | null; lng?: number | null } | null;
+  }, signal?: AbortSignal) =>
+    request<DecisionRecommendResponse>("/api/decision/recommend", {
+      method: "POST",
+      body,
+      signal,
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    }),
+
+  decisionApprove: (decisionId: string, note?: string, signal?: AbortSignal) =>
+    request<DecisionApproveResponse>("/api/decision/approve", {
+      method: "POST",
+      body: { decision_id: decisionId, note: note ?? null },
+      signal,
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    }),
+
+  decisionReject: (decisionId: string, reason: string, signal?: AbortSignal) =>
+    request<DecisionApproveResponse>("/api/decision/reject", {
+      method: "POST",
+      body: { decision_id: decisionId, reason },
+      signal,
+      timeoutMs: COMMAND_TIMEOUT_MS,
     }),
 
   // ── Command center ──────────────────────────────────────────────────────

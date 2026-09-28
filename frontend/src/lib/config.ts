@@ -16,15 +16,16 @@ const positiveInt = (value: string | undefined, fallback: number): number => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
-/** Absolute API origin, or "" when the app should call its own origin. */
-export const API_BASE = normaliseOrigin(import.meta.env.VITE_API_BASE_URL);
+const configuredApiOrigin = normaliseOrigin(import.meta.env.VITE_API_BASE_URL);
+export const API_BASE = configuredApiOrigin;
 
 /** Socket.IO origin. Falls back to the API origin, then to the page origin. */
-export const SOCKET_BASE =
-  normaliseOrigin(import.meta.env.VITE_SOCKET_URL) || API_BASE;
+const configuredSocketOrigin = normaliseOrigin(import.meta.env.VITE_SOCKET_URL);
+export const SOCKET_BASE = configuredSocketOrigin || API_BASE;
 
-/** True when the dev proxy (or a reverse proxy) fronts the backend for us. */
-export const USING_DEV_PROXY = API_BASE === "";
+/** True only when an explicit local proxy mode is requested. */
+export const USING_DEV_PROXY =
+  (import.meta.env.VITE_USE_DEV_PROXY ?? "").trim().toLowerCase() === "true";
 
 /** Build a fully-qualified request URL for a backend path such as "/api/health". */
 export const apiUrl = (path: string): string => {

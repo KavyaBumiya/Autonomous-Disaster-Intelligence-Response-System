@@ -20,6 +20,7 @@ import type {
   Incident,
   PredictionsResponse,
   Resource,
+  Report,
   RoutesResponse,
   Zone,
 } from "./types";
@@ -169,6 +170,13 @@ export function useResources(zoneId?: string) {
   return useApiResource<Resource[]>(
     (signal) => api.resources(zoneId ? { zoneId } : {}, signal).then((r) => r.resources),
     `resources:${zoneId ?? "all"}`,
+  );
+}
+
+export function useReports(zoneId?: string) {
+  return useApiResource<Report[]>(
+    (signal) => api.reports({ zoneId, limit: 100, minTrust: 0.25 }, signal).then((r) => r.reports),
+    `reports:${zoneId ?? "all"}`,
   );
 }
 

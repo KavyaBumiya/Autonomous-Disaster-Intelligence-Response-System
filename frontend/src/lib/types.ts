@@ -110,6 +110,29 @@ export interface IncidentListResponse {
   offset: number;
 }
 
+export interface Report {
+  report_id: string;
+  zone_id: string | null;
+  source: string;
+  trust_score: number | null;
+  suppressed: boolean;
+  disaster_type: string | null;
+  informative: boolean | null;
+  summary: string;
+  lat: number | null;
+  lng: number | null;
+  language_code: string | null;
+  nlp_model_version: string | null;
+  created_at: string | null;
+}
+
+export interface ReportListResponse {
+  reports: Report[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface CriticalIncident {
   incident_id: string;
   zone_id: string;
@@ -239,6 +262,27 @@ export interface ApprovalQueueResponse {
   note: string;
 }
 
+export interface DecisionRecommendResponse {
+  decision_id: string;
+  incident_id: string;
+  action_type: string;
+  recommendation: string;
+  confidence: number;
+  evidence: Record<string, unknown>;
+  explanation: string;
+  model_used: string;
+  model_version: string;
+  requires_human_approval: boolean;
+  status: string;
+  created_at: string;
+}
+
+export interface DecisionApproveResponse {
+  decision_id: string;
+  status: string;
+  message?: string;
+}
+
 export interface AssignResourcesResponse {
   incident_id: string;
   assigned_resources: unknown[];
@@ -247,12 +291,6 @@ export interface AssignResourcesResponse {
   message: string;
 }
 
-export interface ActionUpdateResponse {
-  action_id: string;
-  status: string;
-  approved_by: string;
-  message: string;
-}
 
 // ── Command center ───────────────────────────────────────────────────────
 

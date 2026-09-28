@@ -155,6 +155,12 @@ async def lifespan(app: FastAPI):
     await start_scheduler()
     yield
     await stop_scheduler()
+    from app.integrations.cache import _client as redis_client
+    if redis_client is not None:
+        try:
+            await redis_client.aclose()
+        except Exception:
+            pass
     logger.info("AegisAI backend shut down")
 
 

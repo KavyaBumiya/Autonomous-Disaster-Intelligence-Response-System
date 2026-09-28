@@ -96,3 +96,17 @@ Because the build embeds these values, set them before `npm run build`.
 On the API side, set `FRONTEND_ORIGIN` to the console's deployed origin(s),
 comma-separated. That locks both REST CORS and the Socket.IO handshake to your
 own frontend; leaving it empty keeps the permissive local-demo default.
+
+## AegisAI production backend
+
+The frontend now defaults to the deployed AegisAI API when `VITE_API_BASE_URL` is not provided:
+
+`https://autonomous-disaster-intelligence.onrender.com`
+
+For a Vercel deployment, set:
+
+- `VITE_API_BASE_URL=https://autonomous-disaster-intelligence.onrender.com`
+- `VITE_SOCKET_URL=https://autonomous-disaster-intelligence.onrender.com`
+- `VITE_MAPBOX_TOKEN=<your public Mapbox token>`
+
+The backend integration is unauthenticated and exposes REST under `/api`; Socket.IO uses the same production origin.

@@ -14,16 +14,17 @@ import react from "@vitejs/plugin-react";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
   const target = env.VITE_DEV_PROXY_TARGET || "http://localhost:8000";
+  const useDevProxy = (env.VITE_USE_DEV_PROXY || "").trim().toLowerCase() === "true";
 
   return {
     plugins: [react()],
     server: {
       port: 5173,
-      proxy: {
+      proxy: useDevProxy ? {
         "/api": { target, changeOrigin: true },
         // Socket.IO long-polling handshake and upgrade.
         "/socket.io": { target, changeOrigin: true, ws: true },
-      },
+      } : undefined,
     },
   };
 });

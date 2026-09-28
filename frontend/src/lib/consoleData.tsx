@@ -71,12 +71,14 @@ import {
   usePredictions,
   usePrimaryZoneId,
   useResources,
+  useReports,
   useRoutes,
   useTeamResources,
   useZoneNames,
   useZones,
 } from "./hooks";
-import type { ApprovalAction, Incident, Resource, Zone } from "./types";
+import type { ApprovalAction, Incident, PredictionsResponse, Resource, Report, Zone } from "./types";
+import { useDashboardAI, type DashboardAIBrief } from "./useDashboardAI";
 
 export type { ResourceSlotId, ResourceSlotVisual };
 
@@ -135,6 +137,9 @@ export interface ConsoleData {
   /** Raw collections, exposed for detail reads and mutation flows. */
   incidents: Incident[] | null;
   resources: Resource[] | null;
+  reports: Report[] | null;
+  predictions: PredictionsResponse | null;
+  dashboardAI: DashboardAIBrief;
   /** Pending commander actions awaiting human approval. */
   pendingActions: ApprovalAction[];
   /** Incident backing the top alert row, for explain/summarise reads. */
@@ -172,6 +177,7 @@ export function ConsoleDataProvider({
   const zoneId = usePrimaryZoneId(zones.data);
   const incidents = useIncidents(zoneId ?? undefined);
   const resources = useResources(zoneId ?? undefined);
+  const reports = useReports(zoneId ?? undefined);
   const teamResources = useTeamResources();
   const available = useAvailableResources();
   const approvalQueue = useApprovalQueue();
@@ -180,7 +186,7 @@ export function ConsoleDataProvider({
   const zoneNames = useZoneNames(zones.data);
 
   useLiveRefresh([
-    health, commandHealth, zones, incidents, resources,
+    health, commandHealth, zones, incidents, resources, reports,
     teamResources, available, approvalQueue, predictions, routes,
   ]);
 
@@ -197,6 +203,19 @@ export function ConsoleDataProvider({
       )[0] ?? null,
     [incidents.data],
   );
+
+  const dashboardAIResource = useDashboardAI(
+    zoneId,
+    topIncident,
+    Boolean(commandHealth.data?.ai_available),
+  );
+  const dashboardAI = dashboardAIResource.data ?? {
+    activeEmergency: false,
+    title: "No Emergency Yet",
+    summary: "AegisAI has not identified an active emergency for the selected zone.",
+    preparations: [],
+    raw: "",
+  };
 
   // A failed read must never render as a plausible-looking number. True zeros
   // keep the cards honest; the degraded banner explains why they are empty.
@@ -392,13 +411,15 @@ export function ConsoleDataProvider({
       zones.refresh();
       incidents.refresh();
       resources.refresh();
+      reports.refresh();
+      dashboardAIResource.refresh();
       teamResources.refresh();
       available.refresh();
       approvalQueue.refresh();
       predictions.refresh();
       routes.refresh();
     },
-    [health, commandHealth, zones, incidents, resources, teamResources, available, approvalQueue, predictions, routes],
+    [health, commandHealth, zones, incidents, resources, reports, dashboardAIResource, teamResources, available, approvalQueue, predictions, routes],
   );
 
   const value = useMemo<ConsoleData>(
@@ -430,6 +451,9 @@ export function ConsoleDataProvider({
       availability,
       incidents: incidents.data,
       resources: resources.data,
+      reports: reports.data,
+      predictions: predictions.data,
+      dashboardAI,
       pendingActions: approvalQueue.data?.actions ?? [],
       topIncident,
       selectedIncidentFor: (alert) => findIncidentForAlert(incidents.data, alert),
@@ -448,9 +472,9 @@ export function ConsoleDataProvider({
       recommendations, allocationQueue, allocationPlan, constraints, pressure,
       forecastSeries, evidenceRows, markers, feedHealth, zoneStats, freshness,
       predictionSummary, readiness, availability, incidents.data, resources.data,
-      topIncident, health.error, zones.error, incidents.error, resources.error,
+      topIncident, health.error, zones.error, incidents.error, resources.error, reports.data,
       incidents.isInitialLoading, resources.isInitialLoading, zones.isInitialLoading,
-      refreshAll, commandHealth.data, approvalQueue.data,
+      refreshAll, commandHealth.data, approvalQueue.data, predictions.data, dashboardAI, reports.data,
     ],
   );
 
