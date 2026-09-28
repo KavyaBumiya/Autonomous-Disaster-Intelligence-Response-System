@@ -1,4 +1,4 @@
-from app.main import socket_app
+from app.main import app as fastapi_app
 import gradio as gr
 
 def create_demo():
@@ -82,4 +82,4 @@ def create_demo():
     return demo
 
 demo = create_demo()
-gr.mount_gradio_app(socket_app, demo, path="/")
+gr.mount_gradio_app(fastapi_app, demo, path="/")
