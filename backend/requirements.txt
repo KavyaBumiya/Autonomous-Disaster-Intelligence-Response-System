@@ -33,8 +33,8 @@ httpx>=0.28.0                 # external APIs + NVIDIA NIM chat completions
 
 # ── NLP ───────────────────────────────────────────────────────
 transformers==4.40.2
-torch==2.3.0+cpu              # CPU-only wheel for the Docker runtime
-torchvision==0.18.0+cpu       # Matching CPU vision operators for victim detection
+torch>=2.0.0
+torchvision>=0.15.0
 spacy==3.7.4
 # spaCy English model installed via Dockerfile: python -m spacy download en_core_web_sm
 langdetect==1.0.9
