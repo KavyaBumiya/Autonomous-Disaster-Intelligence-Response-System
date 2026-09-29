@@ -25,6 +25,8 @@ button, input { font: inherit; }
 @keyframes dash { to { stroke-dashoffset: -30; } }
 .pulse { animation: pulse 1.8s ease-in-out infinite; }
 @keyframes pulse { 0%,100%{opacity:.55;transform:scale(.92)} 50%{opacity:1;transform:scale(1.06)} }
+.flow-right { animation: flowRight 1s linear infinite; }
+@keyframes flowRight { from { transform: translateX(-100%); opacity: 0; } 20% { opacity: 1; } 80% { opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
 
 @layer components {
   .panel { @apply rounded-2xl border border-line bg-panel/90 shadow-glow; }

@@ -1,0 +1,20 @@
+export type FloodReading = {
+  water_level: number;
+  flow_velocity: number;
+  timestamp: string;
+};
+
+export type FloodStatus = "NORMAL" | "WARNING" | "CRITICAL";
+
+export type FloodScenario =
+  | "NORMAL"
+  | "RISING_WATER"
+  | "HIGH_FLOW"
+  | "FLOOD"
+  | "RECOVERY";
+
+export type SimulationSpeed = 0.5 | 1 | 2 | 5;
+
+export type WaterLevelBand = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
+export type FlowVelocityBand = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";

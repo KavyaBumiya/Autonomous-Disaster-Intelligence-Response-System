@@ -7,3 +7,4 @@ export { TeamsPage } from "./TeamsPage";
 export { PredictionPage } from "./PredictionPage";
 export { CommanderPage } from "./CommanderPage";
 export { AssistantPage, type Role } from "./AssistantPage";
+export { FloodSimulation } from "./FloodSimulation";

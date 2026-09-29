@@ -21,7 +21,7 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, Base, engine
 from app.services.websocket import sio
 from app.pollers.scheduler import start_scheduler, stop_scheduler
-from app.api import reports, incidents, zones, actions, resources, predictions, command, phase2, heatmaps, routes, earthquakes, weather, nasa, maps, openai, firms, traffic, globe, ai, decision
+from app.api import reports, incidents, zones, actions, resources, predictions, command, phase2, heatmaps, routes, earthquakes, weather, nasa, maps, openai, firms, traffic, globe, ai, decision, flood
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -291,6 +291,7 @@ app.include_router(traffic.router,    prefix="/api/traffic", tags=["tomtom"])
 app.include_router(globe.router,      prefix="/api/globe",  tags=["cesium-ion"])
 app.include_router(ai.router,         tags=["ai"])
 app.include_router(decision.router,   tags=["decision"])
+app.include_router(flood.router,      prefix="/api/flood", tags=["flood"])
 
 
 async def _database_ping() -> None:

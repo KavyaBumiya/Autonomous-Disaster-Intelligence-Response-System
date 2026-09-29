@@ -16,12 +16,13 @@ import {
   PredictionPage,
   CommanderPage,
   AssistantPage,
+  FloodSimulation,
   type Role,
 } from "./pages";
 
 const {
   Activity, Bell, Bot, Crosshair, Gauge, HeartPulse, MapPin, Menu,
-  MessageSquare, Navigation, Package, Radio, Shield, Siren, Truck, Users, X,
+  MessageSquare, Navigation, Package, Radio, Shield, Siren, Truck, Users, Waves, X,
 } = Icons;
 
 export type NavItem =
@@ -33,7 +34,8 @@ export type NavItem =
   | "Teams"
   | "Prediction Engine"
   | "Resource Commander"
-  | "AI Assistant";
+  | "AI Assistant"
+  | "Flood Simulation";
 
 const RESOURCE_SLOTS: readonly ResourceSlotVisual<typeof Users>[] = [
   { id: "teams", label: "Rescue teams", icon: Users, unit: "teams" },
@@ -97,6 +99,7 @@ function Console() {
     { label: "Prediction Engine", icon: Bot, section: "AI systems" },
     { label: "Resource Commander", icon: Crosshair },
     { label: "AI Assistant", icon: MessageSquare },
+    { label: "Flood Simulation", icon: Waves, section: "Simulation" },
   ];
 
   const filteredAlerts = useMemo(
@@ -191,6 +194,7 @@ function Console() {
             {activeNav === "Prediction Engine" && <PredictionPage notify={notify} refreshAll={refreshAll}/>}
             {activeNav === "Resource Commander" && <CommanderPage notify={notify}/>}
             {activeNav === "AI Assistant" && <AssistantPage role={role} notify={notify}/>}
+            {activeNav === "Flood Simulation" && <FloodSimulation />}
           </div>
         </main>
       </div>
