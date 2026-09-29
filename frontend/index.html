@@ -4,6 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#07111f" />
+    <!--
+      Declare the icon explicitly. Without this the browser probes
+      /favicon.ico on every load and the dev server answers 404, which shows up
+      as a console error and a failed request in the network tab.
+    -->
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>AegisAI — Disaster Command Center</title>
   </head>
   <body>

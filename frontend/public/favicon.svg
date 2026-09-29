@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="AegisAI">
+  <rect width="32" height="32" rx="7" fill="#07111f"/>
+  <!-- Aegis shield outline -->
+  <path d="M16 5 L26 9 V16.5 C26 22 21.8 26 16 28 C10.2 26 6 22 6 16.5 V9 Z"
+        fill="none" stroke="#39d9ff" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Live-feed pulse across the shield -->
+  <path d="M9.5 16.5 H13 L15 12.5 L17.5 20 L19.5 16.5 H22.5"
+        fill="none" stroke="#35d39a" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

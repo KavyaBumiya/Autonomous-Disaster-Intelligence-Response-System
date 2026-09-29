@@ -9,8 +9,30 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import pytest
+
+# ── Test database isolation ────────────────────────────────────────────────
+# The suite used to inherit the application's DATABASE_URL, so every test run
+# wrote zones, reports and incidents into the same database the running app
+# serves. That is how "Test Zone <hash>" rows ended up in /api/zones and could
+# even be selected as the primary zone.
+#
+# Point the suite at its own database before any app module is imported:
+# app.core.config.get_settings() is lru_cached and app.core.database builds its
+# engine at import time, so the variable must be set here rather than inside a
+# fixture. Nothing above imports app code, which is what makes this safe.
+#
+# Override with AEGIS_TEST_DATABASE_URL if you need a different target.
+_TEST_DATABASE_URL = os.environ.get(
+    "AEGIS_TEST_DATABASE_URL",
+    "postgresql+asyncpg://aegisai:aegisai_secret@localhost:5433/aegisai_test",
+)
+os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
+# Redis is optional for the suite; point it at the same instance but keep the
+# app's value if one is already set.
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 
 def pytest_addoption(parser):
