@@ -291,6 +291,12 @@ CONTRACT_ENDPOINTS: dict[str, set[str]] = {
     "/api/predictions/fire": {"POST"},
     "/api/predictions/flood": {"POST"},
     "/api/flood/data": {"GET", "POST"},
+    # IoT flood telemetry (device auth, not the public user dependency)
+    "/api/iot/v1/devices": {"GET"},
+    "/api/iot/v1/devices/register": {"POST"},
+    "/api/iot/v1/devices/{device_id}/latest": {"GET"},
+    "/api/iot/v1/devices/{device_id}/history": {"GET"},
+    "/api/iot/v1/telemetry": {"POST"},
     "/api/predictions/what-if": {"POST"},
     "/api/predictions/{zone_id}": {"GET"},
     "/api/reports": {"GET", "POST"},

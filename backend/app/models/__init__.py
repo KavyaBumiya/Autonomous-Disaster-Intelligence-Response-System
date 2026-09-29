@@ -11,6 +11,7 @@ from app.models.social_poll import SocialMediaPoll
 from app.models.audio_upload import AudioUpload
 from app.models.infrastructure import Infrastructure
 from app.models.external import ExternalObservation, Evidence
+from app.models.device import FloodDevice, FloodTelemetry
 
 __all__ = [
     "User", "Zone", "Report", "Incident",
@@ -18,4 +19,5 @@ __all__ = [
     "WeatherReading", "SeismicEvent",
     "SocialMediaPoll", "AudioUpload", "Infrastructure",
     "ExternalObservation", "Evidence",
+    "FloodDevice", "FloodTelemetry",
 ]

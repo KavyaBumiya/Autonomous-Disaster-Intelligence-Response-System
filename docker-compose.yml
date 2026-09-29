@@ -63,6 +63,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aegisai}:${POSTGRES_PASSWORD:-aegisai_secret}@db:5432/${POSTGRES_DB:-aegisai}
       REDIS_URL: redis://redis:6379/0
+      # Bootstrap secret for IoT device registration. Empty disables
+      # registration entirely (the endpoint returns 401 for everything).
+      IOT_REGISTRATION_TOKEN: ${IOT_REGISTRATION_TOKEN:-}
     ports:
       - "8000:8000"
     volumes:

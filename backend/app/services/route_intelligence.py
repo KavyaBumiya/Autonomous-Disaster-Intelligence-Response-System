@@ -28,7 +28,7 @@ Exports:
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import structlog
@@ -85,8 +85,23 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 
 def _traffic_penalty(now: datetime | None = None) -> float:
-    """Rush-hour heuristic for Indian urban contexts (07–10, 17–20 local)."""
-    local = (now or datetime.now(timezone.utc)).hour
+    """Rush-hour heuristic for Indian urban contexts (07–10, 17–20 local).
+
+    The window is IST, not UTC. The previous implementation read
+    `datetime.now(timezone.utc).hour` directly, so the 08:00 IST morning rush
+    (02:30 UTC) and the 18:00 IST evening rush (12:30 UTC) both fell outside the
+    list and the penalty never fired during the hours it exists to model. It
+    fired instead at 17:00–19:00 *UTC*, which is 22:30 IST — nobody is stuck in
+    traffic then.
+
+    India observes no DST, so a fixed +05:30 offset is exact and avoids pulling
+    in a tzdata dependency.
+    """
+    ist_offset = timedelta(hours=5, minutes=30)
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    local = (moment + ist_offset).hour
     if local in (7, 8, 9, 17, 18, 19):
         return 0.25
     return 0.0

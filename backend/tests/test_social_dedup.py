@@ -27,6 +27,7 @@ from sqlalchemy import delete, select
 
 from app.models.report import Report
 from app.services import deduplication
+from tests.conftest import run
 
 pytestmark = pytest.mark.asyncio
 
@@ -78,11 +79,18 @@ async def test_near_duplicate_text_is_suppressed():
     assert deduplication.is_duplicate(repost, "5006") is True
 
 
-async def test_restart_does_not_duplicate_stored_post():
+def test_restart_does_not_duplicate_stored_post():
     """A fresh process (empty in-memory index) must not re-insert a stored post.
 
     This is the guarantee the in-process index cannot provide on its own, so
     `_process_post` checks the database for the exact social_post_id.
+
+    Sync wrapper on purpose. A bare `async def` test gets its own event loop,
+    but `app.core.database.engine` is a module-level pool whose asyncpg
+    connections stay bound to whichever loop last used them — so a direct
+    `AsyncSessionLocal()` here intermittently died with CancelledError inside
+    `bind_execute` depending on test ordering. `run()` disposes the pool around
+    the call so the connection is created on this coroutine's own loop.
     """
     from app.core.database import AsyncSessionLocal
 
@@ -95,30 +103,37 @@ async def test_restart_does_not_duplicate_stored_post():
         "in-memory index is empty after restart, so dedup must fall back to the DB"
     )
 
-    async with AsyncSessionLocal() as db:
-        try:
-            db.add(
-                Report(
-                    id=report_id,
-                    reporter_id="anon",
-                    message_text=text,
-                    social_post_id="5555",
-                    created_at=datetime.now(timezone.utc),
+    async def _exercise():
+        async with AsyncSessionLocal() as db:
+            try:
+                db.add(
+                    Report(
+                        id=report_id,
+                        reporter_id="anon",
+                        message_text=text,
+                        social_post_id="5555",
+                        created_at=datetime.now(timezone.utc),
+                    )
                 )
-            )
-            await db.commit()
+                await db.commit()
 
-            # The durable check the poller performs before inserting.
-            already = (
-                await db.execute(
-                    select(Report.id).where(Report.social_post_id == "5555").limit(1)
+                # The durable check the poller performs before inserting.
+                already = (
+                    await db.execute(
+                        select(Report.id)
+                        .where(Report.social_post_id == "5555")
+                        .limit(1)
+                    )
+                ).first()
+                assert already is not None, (
+                    "stored post must be findable by social_post_id"
                 )
-            ).first()
-            assert already is not None, "stored post must be findable by social_post_id"
-        finally:
-            # Leave no residue for other tests or repeat runs.
-            await db.execute(delete(Report).where(Report.id == report_id))
-            await db.commit()
+            finally:
+                # Leave no residue for other tests or repeat runs.
+                await db.execute(delete(Report).where(Report.id == report_id))
+                await db.commit()
+
+    run(_exercise())
 
 
 async def test_twitter_cursor_is_advanced(monkeypatch):

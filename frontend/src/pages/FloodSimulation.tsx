@@ -270,6 +270,9 @@ export function FloodSimulation() {
     if (mode === "backend") {
       dataSourceRef.current?.pause();
       setIsRunning(false);
+      // No hardcoded device id: the source resolves the enrolled device from
+      // GET /api/iot/v1/devices, so Live mode works on any deployment that has
+      // registered a sensor and reports "no data" when none is enrolled.
       const backend = new BackendDataSource();
       backendSourceRef.current = backend;
       // The returned cleanup was previously discarded, so every visit to this
@@ -278,6 +281,11 @@ export function FloodSimulation() {
         setReading(r);
         setHistory((prev) => (r ? [...prev.slice(-30), r] : prev));
       });
+      // Seed the history chart from stored telemetry so Live mode does not
+      // start empty. Falls back to an empty chart if the device has no data.
+      backend.getHistory(30).then((rows) => {
+        if (rows.length > 0) setHistory(rows);
+      }).catch(() => {});
     } else {
       backendUnsubRef.current?.();
       backendUnsubRef.current = null;

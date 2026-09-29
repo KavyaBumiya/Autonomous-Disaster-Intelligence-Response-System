@@ -302,3 +302,35 @@ async def emit_earthquake_detected(events: list[dict]) -> None:
         "source": "seismic_poller",
     }
     await sio.emit("earthquake.detected", payload, room="global_feed")
+
+
+async def emit_flood_sensor_updated(
+    device_id: str,
+    timestamp: str,
+    water_level: float,
+    flow_velocity: float,
+    risk_level: str | None = None,
+    risk_score: float | None = None,
+    source: str = "iot",
+) -> None:
+    """Fired when new IoT flood telemetry is accepted and processed.
+
+    Carries the minimum the flood dashboard needs: the reading, the device it
+    came from, and the rule-based risk assessment. `source` lets the frontend
+    tell real device data from simulated data without a second field.
+    """
+    payload = {
+        "event": "flood.sensor.updated",
+        "payload": {
+            "device_id": device_id,
+            "timestamp": timestamp,
+            "water_level": water_level,
+            "flow_velocity": flow_velocity,
+            "risk_level": risk_level,
+            "risk_score": risk_score,
+            "source": source,
+        },
+        "timestamp": _now(),
+        "source": source,
+    }
+    await sio.emit("flood.sensor.updated", payload, room="global_feed")

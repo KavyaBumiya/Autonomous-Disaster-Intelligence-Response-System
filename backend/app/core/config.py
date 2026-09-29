@@ -177,6 +177,17 @@ class Settings(BaseSettings):
     # Comma-separated model ids to preload at startup (empty = lazy-load on first use)
     huggingface_preload_models: str = ""
 
+    # ── IoT flood devices ──────────────────────────────────────────────────
+    # Shared secret for the device-registration endpoint. Devices POST here to
+    # get a per-device bearer token. This is a bootstrap secret, not a device
+    # secret — it only gates registration, never telemetry.
+    iot_registration_token: str = ""
+    # Per-device telemetry rate limit (requests per minute). Flood sensors
+    # typically report every 5-30s; 12/min allows a 5s cadence with headroom.
+    iot_telemetry_rate_limit_per_minute: int = 12
+    # Comma-separated device IDs that are allowed to skip auth (dev only).
+    iot_trusted_device_ids: str = ""
+
     # ── App / media ───────────────────────────────────────────────────────
     media_dir:     str = "media/audio"
     app_env:       str = "development"

@@ -33,6 +33,9 @@ os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
 # Redis is optional for the suite; point it at the same instance but keep the
 # app's value if one is already set.
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+# IoT device registration bootstrap token (test value). Must be set before any
+# app module imports so the cached settings pick it up.
+os.environ.setdefault("IOT_REGISTRATION_TOKEN", "test-reg-token")
 
 
 def pytest_addoption(parser):

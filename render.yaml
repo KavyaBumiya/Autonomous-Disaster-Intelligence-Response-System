@@ -33,6 +33,17 @@ services:
         value: "https://autonomous-disaster-int(?:elligence)?(-[a-z0-9-]+)*\\.vercel\\.app"
       - key: APP_ENV
         value: production
+      # NOTE: IOT_REGISTRATION_TOKEN is intentionally NOT listed here.
+      #
+      # It is the bootstrap secret for POST /api/iot/v1/devices/register, and
+      # adding it as `sync: false` would park every deploy in a pending state
+      # until the value is pasted into the Render dashboard. Left unset, device
+      # registration simply rejects every request (401) while all other
+      # endpoints work normally -- a safe default.
+      #
+      # To start enrolling real devices, add it under Environment on the
+      # service: any high-entropy random string. Devices then exchange it for a
+      # per-device token, and only that token's SHA-256 is stored.
       # openai-whisper is not in the image (too heavy for the free tier),
       # so voice reports return an honest error instead of transcribing.
       - key: STT_PROVIDER

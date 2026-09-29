@@ -132,6 +132,14 @@ async def test_calculate_route_osrm_success_contract():
     with patch(
         "app.services.route_intelligence.OsrmConnector.route",
         new=AsyncMock(return_value=fake),
+    ), patch(
+        # Pinned to 0.0 so the duration assertion is deterministic. The real
+        # heuristic is wall-clock driven (see TestTrafficPenalty below), which
+        # made this contract test pass or fail depending on the hour it ran —
+        # at 17:00 UTC the 0.25 rush-hour penalty turned 10.0 into 10.8.
+        # _traffic_penalty is a plain sync function, not a coroutine.
+        "app.services.route_intelligence._traffic_penalty",
+        new=lambda *a, **k: 0.0,
     ):
         route = await calculate_route(22.3, 73.2, 22.4, 73.3, db=None)
 
@@ -149,6 +157,81 @@ async def test_calculate_route_osrm_success_contract():
     assert route["distance_km"] == round(5432.1 / 1000.0, 2)
     assert route["duration_minutes"] == round(600.0 / 60.0, 1)
     assert route["cost"] >= route["distance_km"]
+
+
+async def test_calculate_route_applies_traffic_penalty_to_duration():
+    """Rush hour must slow the route down, and it must do so on the clock the
+    heuristic actually reads (IST), not on whatever minute the test runs."""
+    from unittest.mock import AsyncMock
+
+    from app.services.route_intelligence import calculate_route
+
+    fake = {
+        "distance_m": 5432.1,
+        "duration_s": 600.0,
+        "geometry": [[73.2, 22.3], [73.25, 22.35], [73.3, 22.4]],
+        "route_count": 1,
+    }
+    with patch(
+        "app.services.route_intelligence.OsrmConnector.route",
+        new=AsyncMock(return_value=fake),
+    ), patch(
+        "app.services.route_intelligence._traffic_penalty",
+        new=lambda *a, **k: 0.25,
+    ):
+        route = await calculate_route(22.3, 73.2, 22.4, 73.3, db=None)
+
+    # 10.0 min scaled by (1 + 0.3 * 0.25)
+    assert route["duration_minutes"] == round(10.0 * 1.075, 1)
+    assert route["duration_minutes"] > 10.0
+
+
+class TestTrafficPenalty:
+    """The rush-hour window is Indian local time. These pin the timezone, which
+    is the part that was wrong: the old code compared UTC hours against a local
+    schedule, so 08:00 IST (02:30 UTC) scored as off-peak."""
+
+    def test_ist_morning_rush_is_penalised(self):
+        from datetime import datetime, timezone
+
+        from app.services.route_intelligence import _traffic_penalty
+
+        # 08:00 IST == 02:30 UTC
+        assert _traffic_penalty(
+            datetime(2026, 9, 29, 2, 30, tzinfo=timezone.utc)
+        ) == 0.25
+
+    def test_ist_evening_rush_is_penalised(self):
+        from datetime import datetime, timezone
+
+        from app.services.route_intelligence import _traffic_penalty
+
+        # 18:00 IST == 12:30 UTC
+        assert _traffic_penalty(
+            datetime(2026, 9, 29, 12, 30, tzinfo=timezone.utc)
+        ) == 0.25
+
+    def test_ist_midday_is_not_penalised(self):
+        from datetime import datetime, timezone
+
+        from app.services.route_intelligence import _traffic_penalty
+
+        # 13:00 IST == 07:30 UTC — off peak despite the UTC hour
+        assert _traffic_penalty(
+            datetime(2026, 9, 29, 7, 30, tzinfo=timezone.utc)
+        ) == 0.0
+
+    def test_ist_midnight_is_not_penalised(self):
+        from datetime import datetime, timezone
+
+        from app.services.route_intelligence import _traffic_penalty
+
+        # 23:00 IST == 17:30 UTC — this is the case the old code got wrong,
+        # penalising a full hour of IST late night.
+        assert _traffic_penalty(
+            datetime(2026, 9, 29, 17, 30, tzinfo=timezone.utc)
+        ) == 0.0
+
 
 
 async def test_calculate_route_fallback_contract():

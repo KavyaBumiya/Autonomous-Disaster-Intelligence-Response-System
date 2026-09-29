@@ -134,19 +134,27 @@ class TestNvidiaProvider:
 
     @pytest.mark.asyncio
     async def test_health_no_key(self):
-        # backend/.env is auto-loaded by pydantic-settings, so a key is present
-        # in any normal run. Clear it explicitly: this test is about the
-        # no-key path, and without this it passes or fails depending on whether
-        # the developer happens to have a key configured.
+        # backend/.env is auto-loaded by pydantic-settings, so a real key is
+        # present in any normal run. This test is about the no-key path.
         #
-        # get_settings() is lru_cache'd, so mutating os.environ alone has no
-        # effect -- the cached Settings instance is already built. Clear the
-        # cache inside the patch so the empty key is actually read.
-        with patch.dict(os.environ, {"NVIDIA_API_KEY": ""}):
-            get_settings.cache_clear()
+        # Patch get_settings *inside nvidia_service* rather than mutating
+        # os.environ + clearing get_settings' lru_cache: clearing the
+        # process-wide cache is visible to every later test module, which
+        # re-read .env and breaks tests that rely on the cached values.
+        from types import SimpleNamespace
+
+        import app.integrations.ai.nvidia_service as nvidia_service
+
+        real = get_settings()
+        fake = SimpleNamespace(
+            nvidia_api_key="",
+            nvidia_base_url=real.nvidia_base_url,
+            nvidia_timeout_seconds=real.nvidia_timeout_seconds,
+        )
+        with patch.object(nvidia_service, "get_settings", return_value=fake):
             provider = NvidiaProvider()
             health = await provider.health()
-        get_settings.cache_clear()
+
         assert health["provider"] == "nvidia"
         assert health["status"] == "OFFLINE"
 
