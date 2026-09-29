@@ -37,6 +37,22 @@ class HuggingFaceProvider(AIModelProvider):
     """
 
     provider_name = "huggingface"
+    # Only tasks with a real dispatch branch in predict() are listed. The
+    # vision tasks below were previously advertised here while predict() had no
+    # branch for them, so the router dutifully called this provider, got a
+    # fallback, discarded it, and walked the rest of a chain with no vision
+    # member at all -- every field of the image panel came back null while the
+    # panel still rendered as a successful analysis.
+    #
+    # They are deliberately NOT re-added until a model that can actually do the
+    # job is pinned. The aliases that existed pointed at models that cannot:
+    #   aegis-damage-assessment-v1  -> microsoft/resnet-50   (ImageNet: "tench",
+    #                                  "espresso" reported as damage levels with
+    #                                  the model's real confidence)
+    #   aegis-victim-detection-v1   -> ultralytics/yolov8n   (needs `ultralytics`,
+    #                                  absent from requirements.txt)
+    # Wiring those up would have produced confident, plausible-looking nonsense,
+    # which is worse than an explicit "unavailable".
     supported_tasks = [
         TaskType.TEXT_CLASSIFICATION,
         TaskType.TEXT_GENERATION,
@@ -48,11 +64,6 @@ class HuggingFaceProvider(AIModelProvider):
         TaskType.OBJECT_DETECTION,
         TaskType.SPEECH_TO_TEXT,
         TaskType.EMBEDDING,
-        TaskType.HAZARD_CLASSIFICATION,
-        TaskType.DAMAGE_ASSESSMENT,
-        TaskType.VICTIM_DETECTION,
-        TaskType.FLOOD_MAPPING,
-        TaskType.WILDFIRE_DETECTION,
         TaskType.EXPLAINABILITY,
         TaskType.REPORT_PARSING,
         TaskType.URGENCY_CLASSIFICATION,

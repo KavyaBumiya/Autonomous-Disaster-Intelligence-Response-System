@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, Base, engine
@@ -88,6 +88,52 @@ async def _reconcile_missing_columns() -> list[str]:
         return await conn.run_sync(_sync)
 
 
+# Real monitoring targets for `DEMO_SCENARIO`. A Zone is a place the operator
+# watches, not an observation: the coordinates are a real location and every
+# reading stored against it is fetched live. Only the geometry is seeded.
+DEMO_SCENARIO_ZONES: dict[str, dict] = {
+    "vadodara_flood": {
+        "name": "Vadodara Basin",
+        "centroid_lat": 22.3072,
+        "centroid_lng": 73.1812,
+        "radius_meters": 800.0,
+    },
+}
+
+
+async def _ensure_demo_zone() -> None:
+    """Create the scenario's monitoring zone when the zones table is empty.
+
+    Every panel that needs a zone iterates `zones` — the weather poller returns
+    immediately on an empty list, and the console picks its primary zone from
+    the same list. On a cold database the demo therefore opens onto blank
+    panels until somebody POSTs a zone by hand.
+    """
+    scenario = (get_settings().demo_scenario or "").strip()
+    if not scenario:
+        return
+    spec = DEMO_SCENARIO_ZONES.get(scenario)
+    if spec is None:
+        logger.warning("unknown_demo_scenario", scenario=scenario,
+                       known=sorted(DEMO_SCENARIO_ZONES))
+        return
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.zone import Zone
+
+    try:
+        async with AsyncSessionLocal() as db:
+            existing = (await db.execute(select(func.count(Zone.id)))).scalar_one()
+            if existing:
+                return
+            db.add(Zone(**spec, geometry=None))
+            await db.commit()
+            logger.info("demo zone bootstrapped", scenario=scenario, **spec)
+    except Exception as exc:  # noqa: BLE001 - never block boot on this
+        logger.warning("demo zone bootstrap failed", scenario=scenario,
+                       error=type(exc).__name__, detail=str(exc)[:200])
+
+
 async def _ensure_schema() -> None:
     """Create extensions + full schema from models.
 
@@ -139,6 +185,8 @@ async def _ensure_schema() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: User.__table__.create(c, checkfirst=True))
 
+    await _ensure_demo_zone()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -153,7 +201,15 @@ async def lifespan(app: FastAPI):
         await _ensure_schema()
     except Exception as exc:
         logger.error("Schema/seed bootstrap failed", error=str(exc))
-    await start_scheduler()
+    try:
+        await start_scheduler()
+    except Exception as exc:
+        # start_scheduler already isolates per-poller import failures, so
+        # reaching here means the scheduler itself is broken. Log it and keep
+        # serving: the API is still useful, and every panel reads DEGRADED
+        # rather than the process refusing to bind its port.
+        logger.error("Scheduler failed to start", error=type(exc).__name__,
+                     detail=str(exc)[:200])
     yield
     await stop_scheduler()
     from app.integrations.cache import _client as redis_client

@@ -233,6 +233,7 @@ type DataSourceMode = "simulation" | "backend";
 export function FloodSimulation() {
   const dataSourceRef = useRef<FloodDataSource | null>(null);
   const backendSourceRef = useRef<BackendDataSource | null>(null);
+  const backendUnsubRef = useRef<(() => void) | null>(null);
   const [reading, setReading] = useState<FloodReading | null>(null);
   const [history, setHistory] = useState<FloodReading[]>([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -256,6 +257,10 @@ export function FloodSimulation() {
     return () => {
       unsubscribe();
       source.pause();
+      backendUnsubRef.current?.();
+      backendUnsubRef.current = null;
+      backendSourceRef.current?.disconnect();
+      backendSourceRef.current = null;
     };
   }, []);
 
@@ -267,11 +272,15 @@ export function FloodSimulation() {
       setIsRunning(false);
       const backend = new BackendDataSource();
       backendSourceRef.current = backend;
-      backend.subscribe((r) => {
+      // The returned cleanup was previously discarded, so every visit to this
+      // page leaked one 5 s poller that kept hitting the API after unmount.
+      backendUnsubRef.current = backend.subscribe((r) => {
         setReading(r);
-        setHistory((prev) => [...prev.slice(-30), r]);
+        setHistory((prev) => (r ? [...prev.slice(-30), r] : prev));
       });
     } else {
+      backendUnsubRef.current?.();
+      backendUnsubRef.current = null;
       backendSourceRef.current?.disconnect();
       backendSourceRef.current = null;
       const initialData = generateScenario(scenario, 5);
@@ -486,6 +495,15 @@ export function FloodSimulation() {
               </button>
             </div>
           </div>
+          {dataSourceMode === "backend" && (
+            <span
+              className={`text-[10px] ${
+                reading ? "text-emerald-400" : "text-slate-500"
+              }`}
+            >
+              {reading ? "sensor data received" : "no sensor data yet"}
+            </span>
+          )}
           <div className="h-6 w-px bg-line" />
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500">Scenario:</span>

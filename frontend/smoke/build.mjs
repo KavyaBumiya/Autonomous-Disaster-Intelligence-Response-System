@@ -102,11 +102,18 @@ const EXPECT = {
   "Prediction Engine": [
     "Prediction engine",
     "Flash flood propagation",
-    "HIGH RISK",
     "Forecast timeline",
     "Why the model believes this",
     "River sensor trend",
-    "View model decision trail",
+    "Open decision trail",
+    // Multi-hazard matrix. The backend is unreachable during this render, so
+    // the panel must show its no-data state rather than a confident zero.
+    "All hazards",
+    "Multi-hazard projections",
+    "No hazard projections available",
+    "Waiting for the prediction engine to respond",
+    "Prediction percentages",
+    "Key figures",
   ],
   "Resource Commander": [
     "Resource Commander",

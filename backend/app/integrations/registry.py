@@ -91,9 +91,13 @@ def record_success(provider: str, latency_ms: float, *, detail: dict[str, Any] |
             )
         if detail:
             st.detail.update(detail)
+        # A recovered provider must not keep advertising the rate-limit
+        # explanation that took it down, so drop it alongside the error.
+        st.detail.pop("last_failure_reason", None)
 
 
-def record_failure(provider: str, error: str, *, latency_ms: float | None = None) -> None:
+def record_failure(provider: str, error: str, *, latency_ms: float | None = None,
+                   detail: str | None = None) -> None:
     """Mark a failed provider call; advances DEGRADED → OFFLINE by streak."""
     with _lock:
         st = _state(provider)
@@ -102,6 +106,10 @@ def record_failure(provider: str, error: str, *, latency_ms: float | None = None
         st.consecutive_failures += 1
         st.last_failure_at = time.time()
         st.last_error = error[:300]
+        if detail:
+            # Keeps the most recent quota/rate-limit explanation visible in
+            # /api/health so a 429 can be attributed without log access.
+            st.detail["last_failure_reason"] = detail[:300]
         if latency_ms is not None:
             st.last_latency_ms = round(latency_ms, 1)
         if st.consecutive_failures >= OFFLINE_AFTER_FAILURES or st.last_success_at is None:

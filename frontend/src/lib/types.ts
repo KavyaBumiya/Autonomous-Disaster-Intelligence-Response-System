@@ -219,6 +219,63 @@ export interface PredictionsResponse {
   last_fire: FireProjection;
 }
 
+/** Hazard-specific headline figures; keys vary per hazard. */
+export interface HazardMetrics {
+  flooded_percentage?: number;
+  spread_direction_degrees?: number;
+  magnitude?: number | null;
+  depth_km?: number | null;
+  distance_km?: number | null;
+  shaking_probability?: number | null;
+  susceptibility?: number | null;
+  peak_rain_mm_hr?: number | null;
+  mean_rain_mm_hr?: number | null;
+  wind_speed_kmh?: number | null;
+  impact_probability?: number | null;
+}
+
+export type HazardType = "flood" | "fire" | "earthquake" | "landslide" | "storm";
+
+/**
+ * One hazard from `GET /api/predictions/all/{zone_id}`.
+ *
+ * `available` is authoritative: a hazard with no qualifying observation comes
+ * back false with a `reason`, and its headline numbers are null or zero. That
+ * covers both "no event" (earthquake all-clear) and "no current observation"
+ * (a weather reading the rate-limited poller has not refreshed). Consumers must
+ * check it rather than treating a zero intensity as "modelled and safe".
+ */
+export interface HazardProjection {
+  disaster_type: HazardType;
+  display_name: string;
+  /** "spatially" resolves a cell grid; "zone_uniform" is a single intensity. */
+  modelled: "spatially" | "zone_uniform";
+  available: boolean;
+  reason: string | null;
+  cells: PredictionCell[];
+  max_intensity: number;
+  /**
+   * Share of the zone affected, or null when the hazard does not model area
+   * (fire). Null is not zero — 0% would claim a measurement was made.
+   */
+  coverage_percentage: number | null;
+  metrics: HazardMetrics;
+  inputs: Record<string, unknown>;
+  /** Model caveats, straight from the engine. Never hide these. */
+  limitations: string[];
+  expires_at: string | null;
+}
+
+export interface HazardMatrixResponse {
+  zone_id: string;
+  zone_name: string;
+  hours_ahead: number;
+  projection_label: string;
+  generated_at: string;
+  hazard_count: number;
+  hazards: HazardProjection[];
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────
 
 export interface RouteLeg {
@@ -334,10 +391,15 @@ export interface HeatmapResponse {
   heatmap_type: string;
   cells: Array<Record<string, unknown>>;
   grid_size: number;
+  /**
+   * Null when there are no cells. An empty result is a real answer (no zones,
+   * or a zone_id matching nothing), not a server error, so the map must be
+   * able to render "nothing to show" instead of fitting to a zero-size box.
+   */
   bounding_box: {
     min_lat: number;
     max_lat: number;
     min_lng: number;
     max_lng: number;
-  };
+  } | null;
 }

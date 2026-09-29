@@ -28,13 +28,20 @@ class NvidiaProvider(AIModelProvider):
     """NVIDIA NIM provider — wraps existing NvidiaNIMConnector."""
 
     provider_name = "nvidia"
+    # HAZARD_CLASSIFICATION is deliberately absent. This provider handles every
+    # task identically -- it sends the input to a chat completion and returns the
+    # model's free text as `prediction` with a hardcoded confidence of 0.8. For a
+    # classification task that stores a paragraph in a field the console renders
+    # as an enum badge, and reports 0.8 confidence for a score that has nothing
+    # to do with the text. With no provider advertising the task the router
+    # returns a fallback and the NLP pipeline falls back to its keyword
+    # classifier, which returns a real label.
     supported_tasks = [
         TaskType.TEXT_GENERATION,
         TaskType.TEXT_SUMMARIZATION,
         TaskType.TRANSLATION,
         TaskType.EXPLAINABILITY,
         TaskType.REPORT_PARSING,
-        TaskType.HAZARD_CLASSIFICATION,
     ]
 
     def __init__(self) -> None:

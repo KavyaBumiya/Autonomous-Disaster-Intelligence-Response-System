@@ -180,6 +180,21 @@ class Settings(BaseSettings):
     # ── App / media ───────────────────────────────────────────────────────
     media_dir:     str = "media/audio"
     app_env:       str = "development"
+
+    # Monitoring scenario bootstrapped at startup when `zones` is empty.
+    #
+    # The weather poller iterates zones and returns immediately when there are
+    # none, and a zone is only ever created by POST /api/zones or by ingesting a
+    # report that geocodes. On a fresh database that means the weather panel,
+    # the risk heatmap and every zone-scoped widget stay empty until an operator
+    # acts — so a demo opened on a cold database shows blank panels.
+    #
+    # A Zone is a monitoring *target*, not an observation: the coordinates below
+    # are a real place, and every reading attached to it is fetched live from the
+    # provider. Nothing about the hazard data itself is seeded. Set to "" to
+    # disable and start with a genuinely empty zone list.
+    demo_scenario: str = "vadodara_flood"
+
     # Comma-separated browser origins for CORS. Empty = allow all (local demo).
     frontend_origin: str = ""
     # Optional regex for origins that cannot be enumerated ahead of time.

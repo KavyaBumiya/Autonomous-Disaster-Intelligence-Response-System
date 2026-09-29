@@ -40,6 +40,21 @@ def _rad_to_deg(rad: float) -> float:
     return rad * 180.0 / 3.14159265358979
 
 
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance in km. Used by the seismic and rainfall-hazard
+    models to measure how far an event or storm cell sits from the zone."""
+    r_km = 6371.0
+    d_lat = _deg_to_rad(lat2 - lat1)
+    d_lng = _deg_to_rad(lng2 - lng1)
+    a = (
+        __import__("math").sin(d_lat / 2) ** 2
+        + __import__("math").cos(_deg_to_rad(lat1))
+        * __import__("math").cos(_deg_to_rad(lat2))
+        * __import__("math").sin(d_lng / 2) ** 2
+    )
+    return 2 * r_km * __import__("math").asin(min(1.0, __import__("math").sqrt(a)))
+
+
 # ── Flood Spread ──────────────────────────────────────────────────────────
 
 async def _get_zone_geometry(zone_id: str, db: AsyncSession) -> dict:
@@ -85,6 +100,15 @@ def _flood_propagation_probability(rainfall_mm_hr: float, cell_elevation_relativ
     """
     # Rainfall factor: normalize at 50mm/hr as threshold
     rain_factor = min(1.0, rainfall_mm_hr / 50.0)
+
+    # No rain, no flood. The elevation and distance terms below are unconditional,
+    # so without this gate they contributed 0.35 on their own and a corroborating
+    # report's evidence_boost (max 0.10) pushed the total to 0.41 -- over the 0.4
+    # "flooded" threshold. The model therefore reported ~13% flood intensity for a
+    # zone whose rain gauge read zero. Those terms describe how bad a flood gets
+    # once it is raining; they cannot create one.
+    if rainfall_mm_hr <= 0:
+        return 0.0
 
     # Elevation factor: lower = riskier (we simulate relative elevation 0-1)
     elev_risk = 1.0 - min(1.0, abs(cell_elevation_relative))
@@ -291,6 +315,31 @@ async def _latest_weather(zone_id: str, db: AsyncSession):
     return result.scalar_one_or_none()
 
 
+def _reading_age_minutes(polled_at: datetime | None) -> float | None:
+    """Age of a reading in minutes, or None when it carries no timestamp."""
+    if polled_at is None:
+        return None
+    if polled_at.tzinfo is None:
+        # The column is timestamptz but SQLite fixtures can hand back naive
+        # datetimes; assume UTC rather than reading them as local wall clock.
+        polled_at = polled_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - polled_at).total_seconds() / 60.0)
+
+
+def _stale_reason(polled_at: datetime | None) -> str | None:
+    """Reason string when a reading is too old to present as current, else None."""
+    age = _reading_age_minutes(polled_at)
+    if age is None:
+        return "weather reading has no timestamp"
+    if age > WEATHER_MAX_AGE_MINUTES:
+        return (
+            f"weather reading is stale ({int(age)} min old, limit "
+            f"{int(WEATHER_MAX_AGE_MINUTES)} min) — the weather poller is "
+            f"not keeping up, so no current observation is available"
+        )
+    return None
+
+
 async def _active_incident(zone_id: str, db: AsyncSession):
     from sqlalchemy import and_
 
@@ -372,6 +421,396 @@ async def _gis_context(zone_id: str, db: AsyncSession) -> dict:
     }
 
 
+async def _nearest_seismic(zone: dict, db: AsyncSession, hours: int = 72,
+                           max_km: float = 300.0) -> dict | None:
+    """Strongest recent seismic event within `max_km` of the zone centroid.
+
+    Backed by `seismic_events` (USGS poller, 2-minute cadence). Returns the
+    single most dangerous qualifying event, or None when the catalogue holds
+    nothing recent nearby -- which is a real answer, not missing data.
+    """
+    from datetime import timedelta
+
+    from app.models.seismic import SeismicEvent
+
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    rows = (
+        await db.execute(
+            select(SeismicEvent)
+            .where(SeismicEvent.event_time >= since)
+            .order_by(SeismicEvent.event_time.desc())
+            .limit(200)
+        )
+    ).scalars().all()
+
+    best = None
+    for event in rows:
+        distance = _haversine_km(
+            zone["centroid_lat"], zone["centroid_lng"], event.lat, event.lng
+        )
+        if distance > max_km:
+            continue
+        # Rank by magnitude first, then proximity.
+        if best is None or (event.magnitude, -distance) > (best["magnitude"], -best["distance_km"]):
+            best = {
+                "magnitude": float(event.magnitude),
+                "depth_km": float(event.depth_km) if event.depth_km is not None else 10.0,
+                "distance_km": round(distance, 1),
+                "place": event.place_description or "",
+                "event_time": event.event_time,
+                "usgs_id": event.usgs_id,
+            }
+    return best
+
+
+async def _rainfall_window(zone_id: str, db: AsyncSession, hours: int = 24) -> dict:
+    """Observed rainfall over the trailing `hours`.
+
+    Poll samples are point readings, not an accumulation series, so the driver
+    is the observed PEAK rate rather than a sum -- summing 5-minute samples
+    would invent an accumulation figure the data does not support.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import and_
+
+    from app.models.weather import WeatherReading
+
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    rows = (
+        await db.execute(
+            select(WeatherReading.rainfall_mm_hr, WeatherReading.polled_at)
+            .where(
+                and_(
+                    WeatherReading.zone_id == zone_id,
+                    WeatherReading.polled_at >= since,
+                )
+            )
+            .order_by(WeatherReading.polled_at.desc())
+            .limit(200)
+        )
+    ).all()
+
+    if not rows:
+        return {"available": False, "reason": "no rainfall reading in window", "peak_mm_hr": 0.0,
+                "mean_mm_hr": 0.0, "samples": 0, "window_hours": hours}
+
+    newest_polled_at = rows[0][1]
+    stale = _stale_reason(newest_polled_at)
+    if stale is not None:
+        # The window filter only bounds age by `hours`; a poller that stopped
+        # hours ago still leaves rows inside a 24 h window. Report the gap
+        # instead of summarising a stretch of history as if it were current.
+        return {"available": False, "reason": stale, "peak_mm_hr": 0.0,
+                "mean_mm_hr": 0.0, "samples": 0, "window_hours": hours,
+                "newest_reading_age_min": round(_reading_age_minutes(newest_polled_at) or 0.0, 1)}
+
+    values = [float(v) for v, _ in rows if v is not None]
+    if not values:
+        return {"available": False, "reason": "no rainfall reading in window", "peak_mm_hr": 0.0,
+                "mean_mm_hr": 0.0, "samples": 0, "window_hours": hours}
+    return {
+        "available": True,
+        "peak_mm_hr": round(max(values), 2),
+        "mean_mm_hr": round(sum(values) / len(values), 2),
+        "samples": len(values),
+        "window_hours": hours,
+        "newest_reading_age_min": round(_reading_age_minutes(newest_polled_at) or 0.0, 1),
+    }
+
+
+# ── Extended hazard projections (Phase 18) ─────────────────────────────────
+# Flood and fire SPREAD across space, so they resolve a grid of cells.
+# Earthquake, landslide and wind storm act over an area far larger than a zone
+# footprint, so within a ~500 m zone they are effectively uniform. Modelling
+# them as a spatial spread would fabricate detail the source data cannot
+# support. They therefore return a zone-uniform intensity, tag the result with
+# spatial_resolution="zone_uniform", and carry an explicit limitations list.
+# The console renders these as intensity metrics rather than hazard maps.
+
+# A weather poll older than this is reported as unavailable rather than used.
+# The poller can be rate-limited (open-meteo returns HTTP 429 on the free tier),
+# which leaves a row in weather_readings that is perfectly well-formed and days
+# old. Reading it as current weather would present stale numbers as an
+# observation, so age is treated as missing data.
+WEATHER_MAX_AGE_MINUTES = 90.0        # ~18x the 5-minute poll cadence
+
+SEISMIC_MAGNITUDE_FLOOR = 3.0        # below this, shaking is not perceptible
+SEISMIC_MAGNITUDE_CEIL = 7.0         # at/above this, local exposure is total
+SEISMIC_DEPTH_REFERENCE_KM = 60.0
+SEISMIC_DISTANCE_REFERENCE_KM = 300.0
+LANDSLIDE_SATURATION_MM_HR = 75.0    # rainfall rate that saturates slopes
+STORM_IMPACT_FLOOR_KMH = 40.0        # below this, structural impact is negligible
+STORM_IMPACT_CEIL_KMH = 120.0        # hurricane force
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _zone_grid(zone: dict, grid_cells: int = 3) -> list:
+    """Sync 3x3 grid of cell centres over the zone footprint."""
+    import math
+
+    lat_deg = zone["radius_meters"] / 111_000
+    lng_deg = lat_deg / math.cos(_deg_to_rad(zone["centroid_lat"]))
+    return [
+        {
+            "lat": zone["centroid_lat"] - lat_deg / 2 + (i * lat_deg / (grid_cells - 1)),
+            "lng": zone["centroid_lng"] - lng_deg / 2 + (j * lng_deg / (grid_cells - 1)),
+        }
+        for i in range(grid_cells)
+        for j in range(grid_cells)
+    ]
+
+
+def _seismic_shaking_probability(magnitude: float, depth_km: float,
+                                 distance_km: float) -> float:
+    """Shaking exposure at the zone for a given event. Mirrors the weighted
+    factor structure of the flood model so the two read consistently.
+
+    Below the perceptibility floor the result is exactly zero: the depth and
+    distance terms are non-zero even for a trivial event, so without this gate
+    a M2 tremor kilometres away would register as real exposure.
+    """
+    if magnitude <= SEISMIC_MAGNITUDE_FLOOR:
+        return 0.0
+    mag_factor = _clamp01(
+        (magnitude - SEISMIC_MAGNITUDE_FLOOR)
+        / (SEISMIC_MAGNITUDE_CEIL - SEISMIC_MAGNITUDE_FLOOR)
+    )
+    depth_factor = _clamp01(1.0 - depth_km / SEISMIC_DEPTH_REFERENCE_KM)
+    dist_factor = _clamp01(1.0 - distance_km / SEISMIC_DISTANCE_REFERENCE_KM)
+    return round(mag_factor * 0.5 + depth_factor * 0.2 + dist_factor * 0.3, 3)
+
+
+def _landslide_susceptibility(peak_rain_mm_hr: float) -> float:
+    """Slope-failure susceptibility from observed rainfall rate.
+
+    Only the rainfall leg of a real landslide model (antecedent moisture,
+    slope angle, lithology) is available here; the rest is reported as a
+    limitation rather than guessed."""
+    return round(_clamp01(peak_rain_mm_hr / LANDSLIDE_SATURATION_MM_HR), 3)
+
+
+def _storm_impact_probability(wind_speed_kmh: float) -> float:
+    """Structural impact probability from sustained wind (gale -> hurricane)."""
+    span = STORM_IMPACT_CEIL_KMH - STORM_IMPACT_FLOOR_KMH
+    return round(_clamp01((wind_speed_kmh - STORM_IMPACT_FLOOR_KMH) / span), 3)
+
+
+def _zone_uniform_projection(zone: dict, probability: float, hours: int,
+                             coverage_threshold: float = 0.05) -> dict:
+    """Shared shape for hazards that do not resolve spatially within a zone."""
+    probability = _clamp01(probability)
+    if probability > coverage_threshold:
+        intensity = round(probability * 100.0, 1)
+        cells = [
+            {"lat": c["lat"], "lng": c["lng"], "intensity": intensity, "time_step": 0}
+            for c in _zone_grid(zone)
+        ]
+        coverage = 100.0
+    else:
+        cells = [{
+            "lat": zone["centroid_lat"],
+            "lng": zone["centroid_lng"],
+            "intensity": 0,
+            "time_step": 0,
+        }]
+        coverage = 0.0
+
+    return {
+        "affected_cells": cells,
+        "max_intensity": round(probability * 100.0, 1),
+        "coverage_percentage": coverage,
+        "spatial_resolution": "zone_uniform",
+        "expires_at": datetime.now(timezone.utc) + timedelta(hours=hours),
+    }
+
+
+async def calculate_seismic_shaking(zone_id: str, hours: int = 12,
+                                    db: AsyncSession = None) -> dict:
+    """Seismic shaking exposure for a zone, from the USGS event catalogue.
+
+    `available` is False when the catalogue holds no qualifying recent event
+    nearby. That is a genuine all-clear, and is reported as such rather than
+    being filled with a default magnitude.
+    """
+    if db is None:
+        from app.core.database import AsyncSessionLocal as _AsyncSessionLocal
+        async with _AsyncSessionLocal() as _db:
+            return await calculate_seismic_shaking(zone_id, hours, _db)
+
+    zone = await _get_zone_geometry(zone_id, db)
+    event = await _nearest_seismic(zone, db, hours=72, max_km=SEISMIC_DISTANCE_REFERENCE_KM)
+
+    if event is None:
+        result = _zone_uniform_projection(zone, 0.0, hours, coverage_threshold=0.0)
+        result.update({
+            "available": False,
+            "reason": "no seismic event within 300 km in the last 72 h",
+            "event": None,
+        })
+        return result
+
+    probability = _seismic_shaking_probability(
+        event["magnitude"], event["depth_km"], event["distance_km"]
+    )
+    result = _zone_uniform_projection(zone, probability, hours)
+    result.update({
+        "available": True,
+        "reason": None,
+        "event": {
+            "magnitude": event["magnitude"],
+            "depth_km": event["depth_km"],
+            "distance_km": event["distance_km"],
+            "place": event["place"],
+            "event_time": event["event_time"].isoformat() if event["event_time"] else None,
+            "usgs_id": event["usgs_id"],
+        },
+        "shaking_probability": probability,
+    })
+    return result
+
+
+async def calculate_landslide_risk(zone_id: str, hours: int = 12,
+                                  db: AsyncSession = None) -> dict:
+    """Rainfall-driven landslide susceptibility for a zone."""
+    if db is None:
+        from app.core.database import AsyncSessionLocal as _AsyncSessionLocal
+        async with _AsyncSessionLocal() as _db:
+            return await calculate_landslide_risk(zone_id, hours, _db)
+
+    zone = await _get_zone_geometry(zone_id, db)
+    window = await _rainfall_window(zone_id, db, hours=24)
+
+    if not window["available"]:
+        result = _zone_uniform_projection(zone, 0.0, hours, coverage_threshold=0.0)
+        result.update({
+            "available": False,
+            "reason": window["reason"],
+            "rainfall_window": window,
+        })
+        return result
+
+    probability = _landslide_susceptibility(window["peak_mm_hr"])
+    result = _zone_uniform_projection(zone, probability, hours)
+    result.update({
+        "available": True,
+        "reason": None,
+        "rainfall_window": window,
+        "susceptibility": probability,
+    })
+    return result
+
+
+async def calculate_storm_impact(zone_id: str, wind_speed_kmh: float | None = None,
+                                 hours: int = 12, db: AsyncSession = None) -> dict:
+    """Wind-driven structural impact for a zone."""
+    if db is None:
+        from app.core.database import AsyncSessionLocal as _AsyncSessionLocal
+        async with _AsyncSessionLocal() as _db:
+            return await calculate_storm_impact(zone_id, wind_speed_kmh, hours, _db)
+
+    zone = await _get_zone_geometry(zone_id, db)
+    if wind_speed_kmh is not None:
+        wind, wind_source = float(wind_speed_kmh), "request_parameter"
+        stale_reason = None
+    else:
+        weather = await _latest_weather(zone_id, db)
+        stale_reason = _stale_reason(weather.polled_at) if weather is not None else None
+        if stale_reason is not None:
+            # Do not fall back to the default here: a default wind figure would
+            # present as a current observation when the real problem is that no
+            # current observation exists.
+            result = _zone_uniform_projection(zone, 0.0, hours, coverage_threshold=0.0)
+            result.update({
+                "available": False,
+                "reason": stale_reason,
+                "wind_speed_kmh": None,
+                "wind_source": "unavailable",
+                "impact_probability": None,
+            })
+            return result
+        if weather is not None:
+            wind = float(weather.wind_speed_kmh or 0.0)
+            wind_source = (
+                f"weather_reading:open-meteo @ {weather.polled_at.isoformat()}"
+                if weather.polled_at
+                else "weather_reading:open-meteo"
+            )
+        else:
+            wind, wind_source = DEFAULT_WIND_SPEED_KMH, DEFAULT_LABEL
+
+    probability = _storm_impact_probability(wind)
+    result = _zone_uniform_projection(zone, probability, hours)
+    result.update({
+        "available": True,
+        "reason": None,
+        "wind_speed_kmh": wind,
+        "wind_source": wind_source,
+        "impact_probability": probability,
+    })
+    return result
+
+
+# ── Hazard catalogue ───────────────────────────────────────────────────────
+
+HAZARD_CATALOGUE: dict[str, dict] = {
+    "flood": {
+        "display_name": "Flash flood propagation",
+        "modelled": "spatially",
+        "driver": "rainfall_mm_hr",
+    },
+    "fire": {
+        "display_name": "Wildfire spread",
+        "modelled": "spatially",
+        "driver": "wind_speed_kmh",
+    },
+    "earthquake": {
+        "display_name": "Seismic shaking exposure",
+        "modelled": "zone_uniform",
+        "driver": "magnitude",
+    },
+    "landslide": {
+        "display_name": "Landslide susceptibility",
+        "modelled": "zone_uniform",
+        "driver": "rainfall_mm_hr",
+    },
+    "storm": {
+        "display_name": "Wind storm impact",
+        "modelled": "zone_uniform",
+        "driver": "wind_speed_kmh",
+    },
+}
+
+HAZARD_LIMITATIONS: dict[str, list[str]] = {
+    "flood": [
+        "Cell elevation is assumed uniform; no terrain DEM is available.",
+        "Distance-to-centroid is used as a drainage proxy, not a real channel.",
+    ],
+    "fire": [
+        "Spread direction is a speed-derived bias, not an observed wind vector.",
+        "No fuel or vegetation model is applied.",
+    ],
+    "earthquake": [
+        "Only the strongest qualifying event is projected; aftershock sequences "
+        "are not modelled.",
+        "Zone-uniform: shaking varies negligibly across a few hundred metres, "
+        "so no spatial map is produced.",
+    ],
+    "landslide": [
+        "Rainfall is the only driver available. Slope angle, lithology and "
+        "antecedent moisture are absent, so this under-reports real risk.",
+        "Zone-uniform for the same reason as earthquake.",
+    ],
+    "storm": [
+        "Wind speed only. No gust factor, direction or duration distribution.",
+        "No asset vulnerability model; impact is not weighted by what is built.",
+    ],
+}
+
+
 # ── Main API ──────────────────────────────────────────────────────────────
 
 async def predict_spread(zone_id: str, disaster_type: str, hours_ahead: int = 12,
@@ -390,7 +829,8 @@ async def predict_spread(zone_id: str, disaster_type: str, hours_ahead: int = 12
 
     Args:
         zone_id: Zone identifier
-        disaster_type: "flood" or "fire"
+        disaster_type: one of HAZARD_CATALOGUE ("flood", "fire", "earthquake",
+            "landslide", "storm")
         hours_ahead: Number of hours to simulate (default 12)
         db: AsyncSession (lazy-creates if None)
         rainfall_mm_hr: explicit override (POST /predictions/flood, what-if)
@@ -470,11 +910,176 @@ async def predict_spread(zone_id: str, disaster_type: str, hours_ahead: int = 12
             "evidence": evidence,
             "gis_context": gis_ctx,
         }
+    elif disaster_type.lower() == "earthquake":
+        result = await calculate_seismic_shaking(zone_id, hours=hours_ahead, db=db)
+        inputs = {
+            "source": "seismic_events:usgs",
+            "catalogue_window_hours": 72,
+            "catalogue_radius_km": SEISMIC_DISTANCE_REFERENCE_KM,
+            "event": result.get("event"),
+            "available": result.get("available"),
+            "reason": result.get("reason"),
+            "gis_context": gis_ctx,
+        }
+    elif disaster_type.lower() == "landslide":
+        result = await calculate_landslide_risk(zone_id, hours=hours_ahead, db=db)
+        inputs = {
+            "rainfall_window": result.get("rainfall_window"),
+            "available": result.get("available"),
+            "reason": result.get("reason"),
+            "gis_context": gis_ctx,
+        }
+    elif disaster_type.lower() == "storm":
+        result = await calculate_storm_impact(
+            zone_id, wind_speed_kmh=wind_speed_kmh, hours=hours_ahead, db=db
+        )
+        inputs = {
+            "wind_speed_kmh": result.get("wind_speed_kmh"),
+            "wind_source": result.get("wind_source"),
+            "gis_context": gis_ctx,
+        }
     else:
-        raise ValueError(f"Unknown disaster type: {disaster_type}. Expected 'flood' or 'fire'.")
+        raise ValueError(
+            f"Unknown disaster type: {disaster_type}. "
+            f"Expected one of: {', '.join(sorted(HAZARD_CATALOGUE))}."
+        )
 
+    kind = disaster_type.lower()
     result["projection_label"] = "MODEL PROJECTION"
-    result["disaster_type"] = disaster_type.lower()
+    result["disaster_type"] = kind
+    result["display_name"] = HAZARD_CATALOGUE[kind]["display_name"]
+    result["modelled"] = HAZARD_CATALOGUE[kind]["modelled"]
+    result["limitations"] = HAZARD_LIMITATIONS[kind]
+    result.setdefault("available", True)
+    result.setdefault("reason", None)
     result["inputs"] = inputs
     result["generated_at"] = datetime.now(timezone.utc).isoformat()
     return result
+
+
+async def predict_all_hazards(zone_id: str, hours_ahead: int = 12,
+                              db: AsyncSession = None) -> dict:
+    """Every modelled hazard for a zone in one uniform envelope.
+
+    Returns a list rather than a fixed-key object so the console can render new
+    hazards without a frontend change. Each entry keeps its own `available`
+    flag: a hazard with no qualifying observation is reported as unavailable
+    with a reason, never as a zero-valued model run.
+    """
+    from app.models.zone import Zone
+
+    if db is None:
+        from app.core.database import AsyncSessionLocal as _AsyncSessionLocal
+        async with _AsyncSessionLocal() as _db:
+            return await predict_all_hazards(zone_id, hours_ahead, _db)
+
+    zone_row = (await db.execute(select(Zone).where(Zone.id == zone_id))).scalar_one_or_none()
+    if zone_row is None:
+        raise ValueError(f"Zone {zone_id} not found")
+
+    hazards: list[dict] = []
+    for kind in HAZARD_CATALOGUE:
+        try:
+            run_result = await predict_spread(
+                zone_id=zone_id, disaster_type=kind, hours_ahead=hours_ahead, db=db
+            )
+            error = None
+        except ValueError as exc:
+            logger.warning("hazard_run_failed", zone_id=zone_id, hazard=kind, error=str(exc))
+            run_result, error = None, str(exc)
+
+        if run_result is None:
+            hazards.append({
+                "disaster_type": kind,
+                "display_name": HAZARD_CATALOGUE[kind]["display_name"],
+                "modelled": HAZARD_CATALOGUE[kind]["modelled"],
+                "available": False,
+                "reason": error,
+                "cells": [],
+                "max_intensity": 0.0,
+                "coverage_percentage": None,
+                "metrics": {},
+                "inputs": {},
+                "limitations": HAZARD_LIMITATIONS[kind],
+                "expires_at": None,
+            })
+            continue
+
+        # Flood reports its cells as `affected_cells`, fire as `burned_area`.
+        # Reading the wrong key silently produced an empty fire map.
+        cells = run_result.get("affected_cells")
+        if cells is None:
+            cells = run_result.get("burned_area") or []
+
+        # Coverage is only defined where the hazard actually models area. Fire
+        # has no coverage metric, and reporting 0.0 next to a high intensity
+        # would read as "0% of the zone affected" when nothing was measured.
+        coverage = run_result.get("coverage_percentage")
+        if coverage is None:
+            coverage = run_result.get("flooded_percentage")
+        coverage = None if coverage is None else float(coverage)
+
+        available = bool(run_result.get("available", True))
+        if not available:
+            # No projection was actually produced, so the placeholder cell the
+            # uniform helper emits must not be presented as one.
+            cells = []
+            coverage = None
+
+        hazards.append({
+            "disaster_type": kind,
+            "display_name": run_result.get("display_name", kind),
+            "modelled": run_result.get("modelled", HAZARD_CATALOGUE[kind]["modelled"]),
+            "available": available,
+            "reason": run_result.get("reason"),
+            "cells": cells,
+            "max_intensity": float(run_result.get("max_intensity") or 0.0),
+            "coverage_percentage": coverage,
+            "metrics": _hazard_metrics(kind, run_result),
+            "inputs": run_result.get("inputs", {}),
+            "limitations": run_result.get("limitations", []),
+            "expires_at": (
+                run_result["expires_at"].isoformat()
+                if hasattr(run_result.get("expires_at"), "isoformat")
+                else run_result.get("expires_at")
+            ),
+        })
+
+    return {
+        "zone_id": zone_id,
+        "zone_name": zone_row.name,
+        "hours_ahead": hours_ahead,
+        "projection_label": "MODEL PROJECTION",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "hazard_count": len(hazards),
+        "hazards": hazards,
+    }
+
+
+def _hazard_metrics(kind: str, result: dict) -> dict:
+    """Hazard-specific headline numbers, flattened for display."""
+    if kind == "flood":
+        return {"flooded_percentage": result.get("flooded_percentage", 0.0)}
+    if kind == "fire":
+        return {"spread_direction_degrees": result.get("spread_direction_degrees", 0.0)}
+    if kind == "earthquake":
+        event = result.get("event") or {}
+        return {
+            "magnitude": event.get("magnitude"),
+            "depth_km": event.get("depth_km"),
+            "distance_km": event.get("distance_km"),
+            "shaking_probability": result.get("shaking_probability"),
+        }
+    if kind == "landslide":
+        window = result.get("rainfall_window") or {}
+        return {
+            "susceptibility": result.get("susceptibility"),
+            "peak_rain_mm_hr": window.get("peak_mm_hr"),
+            "mean_rain_mm_hr": window.get("mean_mm_hr"),
+        }
+    if kind == "storm":
+        return {
+            "wind_speed_kmh": result.get("wind_speed_kmh"),
+            "impact_probability": result.get("impact_probability"),
+        }
+    return {}

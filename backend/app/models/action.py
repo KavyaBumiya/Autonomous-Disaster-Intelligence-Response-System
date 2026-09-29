@@ -16,7 +16,15 @@ class Action(Base):
     recommended_by: Mapped[str] = mapped_column(String(80), default="decision_engine")
     status: Mapped[str] = mapped_column(String(30), default="pending_approval")
     # pending_approval | approved | rejected | dispatched | completed
-    approved_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    # Free-form actor label, not a FK to users.id. This deployment is
+    # unauthenticated (see app/auth/dependencies.py) and users are no longer
+    # seeded, so the previous ForeignKey pointed at an empty table: every
+    # approve/reject wrote the constant "operator" into it and raised an
+    # IntegrityError on any database built by Base.metadata.create_all, while an
+    # Alembic-built one (migration 0001 creates the column without the FK)
+    # silently accepted it. The same code path failed or succeeded depending on
+    # how the database was provisioned.
+    approved_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
     priority_score: Mapped[float] = mapped_column(Float, default=0.0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

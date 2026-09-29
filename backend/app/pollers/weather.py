@@ -77,10 +77,16 @@ async def poll_weather() -> None:
 
 async def _poll_weather_inner() -> None:
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Zone))
+        # Soft-deleted zones are excluded everywhere else in the codebase
+        # (heatmaps, zones API, route intelligence). Polling them anyway keeps
+        # burning Open-Meteo quota every 5 minutes -- pushing a shared Render
+        # egress IP further toward the 429 -- and keeps emitting
+        # weather.updated for zones the operator removed.
+        result = await db.execute(select(Zone).where(Zone.deleted == False))  # noqa: E712
         zones = result.scalars().all()
 
         if not zones:
+            logger.info("weather_poll_no_zones", hint="no live zones; weather panel empty")
             return
 
         # Latest risk per zone (DISTINCT ON — one row per zone) for throttling

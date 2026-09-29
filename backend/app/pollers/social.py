@@ -206,41 +206,57 @@ async def _poll_social_inner() -> None:
     hashtags = settings.social_hashtag_list
 
     async with AsyncSessionLocal() as db:
-        for hashtag in hashtags:
-            posts = []
-            if provider == "mastodon":
-                posts = await _fetch_mastodon(hashtag)
-            else:
-                posts = await _fetch_twitter(hashtag)
-                if not posts:  # fallback to Mastodon
+        # begin_nested() needs an outer transaction to attach its SAVEPOINT to.
+        await db.begin()
+        try:
+            for hashtag in hashtags:
+                posts = []
+                if provider == "mastodon":
                     posts = await _fetch_mastodon(hashtag)
+                else:
+                    posts = await _fetch_twitter(hashtag)
+                    if not posts:  # fallback to Mastodon
+                        posts = await _fetch_mastodon(hashtag)
 
-            fetched = len(posts)
-            stored = 0
-            filtered = 0
+                fetched = len(posts)
+                stored = 0
+                filtered = 0
 
-            for post in posts:
-                try:
-                    ok = await _process_post(post, db)
+                for post in posts:
+                    # Every hashtag shares this session and there is a single
+                    # commit() at the end. _process_post flushes and then calls
+                    # set_report_geometry, so one PostGIS or geocoding failure
+                    # marks the whole transaction aborted: every later statement
+                    # in it then fails with InFailedSqlTransaction and the
+                    # remaining hashtags' work is discarded -- while the poll
+                    # summary below still logs success. A SAVEPOINT scopes the
+                    # rollback to the single post that failed.
+                    try:
+                        async with db.begin_nested():
+                            ok = await _process_post(post, db)
+                    except Exception as e:
+                        logger.warning("Social post processing failed", error=str(e))
+                        ok = False
+
                     if ok:
                         stored += 1
                     else:
                         filtered += 1
-                except Exception as e:
-                    logger.warning("Social post processing failed", error=str(e))
-                    filtered += 1
 
-            # Log poll summary
-            poll_log = SocialMediaPoll(
-                id=str(uuid.uuid4()),
-                hashtag=hashtag,
-                api_source=provider,
-                posts_fetched=fetched,
-                posts_stored=stored,
-                posts_filtered=filtered,
-                polled_at=datetime.now(timezone.utc),
-            )
-            db.add(poll_log)
+                # Log poll summary
+                poll_log = SocialMediaPoll(
+                    id=str(uuid.uuid4()),
+                    hashtag=hashtag,
+                    api_source=provider,
+                    posts_fetched=fetched,
+                    posts_stored=stored,
+                    posts_filtered=filtered,
+                    polled_at=datetime.now(timezone.utc),
+                )
+                db.add(poll_log)
 
-        await db.commit()
-        logger.info("Social poll complete", provider=provider, hashtags=len(hashtags))
+            await db.commit()
+            logger.info("Social poll complete", provider=provider, hashtags=len(hashtags))
+        except Exception:
+            await db.rollback()
+            raise

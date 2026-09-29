@@ -47,6 +47,7 @@ class ConnectorError(Exception):
         status_code: int | None = None,
         retryable: bool = True,
         retry_after: float | None = None,
+        detail: str | None = None,
     ) -> None:
         self.provider = provider
         self.message = message
@@ -54,7 +55,66 @@ class ConnectorError(Exception):
         self.retryable = retryable
         # Seconds the provider asked us to wait (Retry-After), when it sent one.
         self.retry_after = retry_after
+        # Short diagnostic tail for 429/5xx: quota headers or a truncated body,
+        # so a rate limit can be attributed rather than guessed at. Sanitised in
+        # _rate_limit_detail before it ever reaches a log line.
+        self.detail = detail
         super().__init__(f"{provider}: {message}")
+
+
+# Quota headers worth attributing a 429 to. Read-only, never logged raw.
+_QUOTA_HEADERS = (
+    "x-ratelimit-limit-requests",
+    "x-ratelimit-remaining-requests",
+    "x-ratelimit-limit-tokens",
+    "x-ratelimit-remaining-tokens",
+    "x-ratelimit-reset-requests",
+    "ratelimit-limit",
+    "ratelimit-remaining",
+    "ratelimit-reset",
+)
+
+_DETAIL_MAX_CHARS = 200
+
+
+def _rate_limit_detail(resp: httpx.Response) -> str | None:
+    """Why a provider said no, in a form safe to log.
+
+    A bare "HTTP 429" cannot distinguish a per-key quota (fix: rotate or wait)
+    from per-IP sharing (fix: paid tier) from upstream capacity shedding
+    (fix: back off). Providers advertise this in quota headers, and failing
+    that in a short JSON body, so prefer headers and fall back to the body.
+
+    The body is provider-controlled, so it is truncated hard and scrubbed for
+    anything shaped like a credential before it is returned.
+    """
+    parts: list[str] = []
+    for name in _QUOTA_HEADERS:
+        try:
+            value = resp.headers.get(name)
+        except Exception:  # pragma: no cover - defensive, headers are a mapping
+            value = None
+        if value:
+            parts.append(f"{name.replace('x-ratelimit-', '').replace('ratelimit-', '')}={value}")
+
+    if not parts:
+        try:
+            body = resp.text or ""
+        except Exception:  # pragma: no cover - body may not be decodable
+            body = ""
+        body = " ".join(body.split())
+        if body:
+            parts.append(body)
+
+    if not parts:
+        return None
+
+    detail = " ".join(parts)[:_DETAIL_MAX_CHARS]
+    # Never let a provider echo a secret back into our logs.
+    for marker in ("Bearer ", "sk-", "nvapi-", "eyJ"):
+        if marker in detail:
+            return "(provider detail withheld: looked like it contained a credential)"
+    return detail
 
 
 def _parse_retry_after(headers: Any) -> float | None:
@@ -174,6 +234,7 @@ class BaseConnector:
                         status_code=resp.status_code,
                         retryable=True,
                         retry_after=_parse_retry_after(resp.headers),
+                        detail=_rate_limit_detail(resp),
                     )
                 elif resp.status_code >= 400:
                     error = ConnectorError(
@@ -256,7 +317,9 @@ class BaseConnector:
 
         total_ms = (time.perf_counter() - started) * 1000
         assert error is not None
-        registry.record_failure(self.provider, error.message, latency_ms=total_ms)
+        registry.record_failure(
+            self.provider, error.message, latency_ms=total_ms, detail=error.detail
+        )
         logger.warning(
             "connector_failed",
             provider=self.provider,
@@ -266,6 +329,8 @@ class BaseConnector:
             status_code=error.status_code,
             latency_ms=round(total_ms, 1),
             attempts=attempt,
+            retry_after=error.retry_after,
+            detail=error.detail,
         )
         raise error
 

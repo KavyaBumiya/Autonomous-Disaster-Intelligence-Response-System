@@ -24,6 +24,7 @@ import type {
   DecisionRecommendResponse,
   CriticalResponse,
   ExplainResponse,
+  HazardMatrixResponse,
   HealthResponse,
   Incident,
   IncidentListResponse,
@@ -281,6 +282,13 @@ export const api = {
     request<PredictionsResponse>(`/api/predictions/${encodeURIComponent(zoneId)}`, {
       signal,
       timeoutMs: 45_000,
+    }),
+
+  /** Every modelled hazard for a zone in one uniform envelope. */
+  hazardMatrix: (zoneId: string, signal?: AbortSignal) =>
+    request<HazardMatrixResponse>(`/api/predictions/all/${encodeURIComponent(zoneId)}`, {
+      signal,
+      timeoutMs: 60_000,
     }),
 
   computeRoutes: (

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from app.core.database import get_db
-from app.engine.prediction_engine import predict_spread
+from app.engine.prediction_engine import predict_all_hazards, predict_spread
 
 logger = structlog.get_logger()
 
@@ -98,6 +98,26 @@ async def predict_fire(body: FirePredictionBody, db: AsyncSession = Depends(get_
         raise HTTPException(400, detail=str(e))
 
 
+@router.get("/all/{zone_id}", tags=["predictions"])
+async def get_all_hazard_predictions(
+    zone_id: str,
+    hours: int = 12,
+    db: AsyncSession = Depends(get_db),
+):
+    """Every modelled hazard for a zone in one uniform envelope.
+
+    Declared before `/{zone_id}` so the literal `all` segment cannot be
+    captured as a zone id. Unlike `/{zone_id}`, this returns a list of hazards
+    so the console renders new hazards without a frontend change, and each
+    entry reports its own `available` flag and `reason` rather than silently
+    returning a zero-valued projection.
+    """
+    try:
+        return await predict_all_hazards(zone_id=zone_id, hours_ahead=hours, db=db)
+    except ValueError as e:
+        raise HTTPException(404, detail=str(e))
+
+
 @router.get("/{zone_id}", tags=["predictions"])
 async def get_predictions(
     zone_id: str,
@@ -156,14 +176,18 @@ async def what_if_simulation(body: WhatIfBody, db: AsyncSession = Depends(get_db
     # Body parameters now actually drive the base run (previously ignored;
     # body defaults 50/20 equal the legacy hard-coded values).
     kind = body.disaster_type.lower()
-    base_result = await predict_spread(
-        zone_id=body.zone_id,
-        disaster_type=body.disaster_type,
-        hours_ahead=body.hours,
-        db=db,
-        rainfall_mm_hr=body.rainfall_mm_hr if kind == "flood" else None,
-        wind_speed_kmh=body.wind_speed_kmh if kind == "fire" else None,
-    )
+    try:
+        base_result = await predict_spread(
+            zone_id=body.zone_id,
+            disaster_type=body.disaster_type,
+            hours_ahead=body.hours,
+            db=db,
+            rainfall_mm_hr=body.rainfall_mm_hr if kind == "flood" else None,
+            wind_speed_kmh=body.wind_speed_kmh if kind in ("fire", "storm") else None,
+        )
+    except ValueError as e:
+        # An unsupported disaster_type is a client error, not a server fault.
+        raise HTTPException(400, detail=str(e))
 
     priority_delta = body.resource_delta * 3.0
     new_priority = max(

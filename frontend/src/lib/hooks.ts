@@ -16,6 +16,7 @@ import type {
   ApprovalQueueResponse,
   AvailableResourcesResponse,
   CommandHealthResponse,
+  HazardMatrixResponse,
   HealthResponse,
   Incident,
   PredictionsResponse,
@@ -71,7 +72,16 @@ export function useApiResource<T>(
     let cancelled = false;
     const controller = new AbortController();
 
+    // A request slower than the poll interval must not stack: each tick would
+    // otherwise start another fetch alongside the ones already in flight. The
+    // dashboard-AI poll runs against a 90s server timeout, so on a slow or
+    // throttled provider this accumulated parallel LLM calls until the provider
+    // rate-limited the whole console.
+    let inFlight = false;
+
     const run = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const result = await fetcherRef.current(controller.signal);
         if (cancelled) return;
@@ -83,6 +93,7 @@ export function useApiResource<T>(
         // Keep the previous payload: a single failed poll must not blank a panel.
         setError(err instanceof ApiError ? err.detail : "Backend unreachable");
       } finally {
+        inFlight = false;
         if (!cancelled) setInitialLoading(false);
       }
     };
@@ -111,8 +122,16 @@ export function useApiResource<T>(
 /**
  * Refresh the provided resources whenever the live feed publishes an event.
  * Polling still runs; this just makes the console feel immediate.
+ *
+ * `event` is the socket event that fired. A resource must never refresh itself
+ * in response to an event that its own request produced: `routes` POSTs
+ * /api/routes/compute and that handler emits `route_changed`, so refreshing on
+ * that event closed a loop -- POST -> emit -> refresh -> POST -- throttled only
+ * by network latency, with each cycle also driving a full LLM agent call.
  */
-export function useLiveRefresh(resources: Array<{ refresh: () => void }>): void {
+export function useLiveRefresh(
+  resources: Array<{ refresh: () => void }>,
+): void {
   const refreshRef = useRef(resources);
   refreshRef.current = resources;
 
@@ -126,7 +145,6 @@ export function useLiveRefresh(resources: Array<{ refresh: () => void }>): void 
       "prediction_updated",
       "resource_status_updated",
       "resource_assigned",
-      "route_changed",
       "weather.updated",
       "earthquake.detected",
     ];
@@ -223,6 +241,14 @@ export function usePredictions(zoneId: string | null) {
   return useApiResource<PredictionsResponse>(
     (signal) => api.predictions(zoneId as string, signal),
     `predictions:${zoneId ?? "none"}`,
+    { intervalMs: 60_000, enabled: Boolean(zoneId) },
+  );
+}
+
+export function useHazardMatrix(zoneId: string | null) {
+  return useApiResource<HazardMatrixResponse>(
+    (signal) => api.hazardMatrix(zoneId as string, signal),
+    `hazard-matrix:${zoneId ?? "none"}`,
     { intervalMs: 60_000, enabled: Boolean(zoneId) },
   );
 }

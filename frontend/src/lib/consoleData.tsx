@@ -65,6 +65,7 @@ import {
   useApprovalQueue,
   useAvailableResources,
   useCommandHealth,
+  useHazardMatrix,
   useHealth,
   useIncidents,
   useLiveFeedStatus,
@@ -78,7 +79,15 @@ import {
   useZoneNames,
   useZones,
 } from "./hooks";
-import type { ApprovalAction, Incident, PredictionsResponse, Resource, Report, Zone } from "./types";
+import type {
+  ApprovalAction,
+  HazardMatrixResponse,
+  Incident,
+  PredictionsResponse,
+  Resource,
+  Report,
+  Zone,
+} from "./types";
 import { useDashboardAI, type DashboardAIBrief } from "./useDashboardAI";
 
 export type { ResourceSlotId, ResourceSlotVisual };
@@ -140,6 +149,8 @@ export interface ConsoleData {
   resources: Resource[] | null;
   reports: Report[] | null;
   predictions: PredictionsResponse | null;
+  /** All modelled hazards for the selected zone, in one uniform envelope. */
+  hazardMatrix: HazardMatrixResponse | null;
   dashboardAI: DashboardAIBrief;
   /** Pending commander actions awaiting human approval. */
   pendingActions: ApprovalAction[];
@@ -183,6 +194,7 @@ export function ConsoleDataProvider({
   const available = useAvailableResources();
   const approvalQueue = useApprovalQueue();
   const predictions = usePredictions(zoneId);
+  const hazardMatrix = useHazardMatrix(zoneId);
   const routes = useRoutes(zoneId);
   const zoneNames = useZoneNames(zones.data);
   // Real socket state, so the health badge reflects the live channel rather than
@@ -191,7 +203,7 @@ export function ConsoleDataProvider({
 
   useLiveRefresh([
     health, commandHealth, zones, incidents, resources, reports,
-    teamResources, available, approvalQueue, predictions, routes,
+    teamResources, available, approvalQueue, predictions, hazardMatrix, routes,
   ]);
 
   // ── Derivation ─────────────────────────────────────────────────────────
@@ -447,9 +459,10 @@ export function ConsoleDataProvider({
       available.refresh();
       approvalQueue.refresh();
       predictions.refresh();
+      hazardMatrix.refresh();
       routes.refresh();
     },
-    [health, commandHealth, zones, incidents, resources, reports, dashboardAIResource, teamResources, available, approvalQueue, predictions, routes],
+    [health, commandHealth, zones, incidents, resources, reports, dashboardAIResource, teamResources, available, approvalQueue, predictions, hazardMatrix, routes],
   );
 
   const value = useMemo<ConsoleData>(
@@ -483,6 +496,7 @@ export function ConsoleDataProvider({
       resources: resources.data,
       reports: reports.data,
       predictions: predictions.data,
+      hazardMatrix: hazardMatrix.data,
       dashboardAI,
       pendingActions: approvalQueue.data?.actions ?? [],
       topIncident,
@@ -494,6 +508,7 @@ export function ConsoleDataProvider({
         Boolean(zones.error) ||
         Boolean(reports.error) ||
         Boolean(predictions.error) ||
+        Boolean(hazardMatrix.error) ||
         Boolean(routes.error) ||
         Boolean(approvalQueue.error) ||
         Boolean(teamResources.error) ||
@@ -520,13 +535,13 @@ export function ConsoleDataProvider({
       forecastSeries, evidenceRows, markers, feedHealth, zoneStats, freshness,
       predictionSummary, readiness, availability, incidents.data, resources.data,
       topIncident, health.error, zones.error, incidents.error, resources.error, reports.data,
-      reports.error, predictions.error, routes.error, approvalQueue.error,
+      reports.error, predictions.error, hazardMatrix.error, routes.error, approvalQueue.error,
       teamResources.error, available.error, commandHealth.error,
       incidents.isInitialLoading, resources.isInitialLoading, zones.isInitialLoading,
       reports.isInitialLoading, predictions.isInitialLoading, routes.isInitialLoading,
       approvalQueue.isInitialLoading, teamResources.isInitialLoading,
       available.isInitialLoading, health.isInitialLoading, commandHealth.isInitialLoading,
-      refreshAll, commandHealth.data, approvalQueue.data, predictions.data, dashboardAI, reports.data,
+      refreshAll, commandHealth.data, approvalQueue.data, predictions.data, hazardMatrix.data, dashboardAI, reports.data,
     ],
   );
 

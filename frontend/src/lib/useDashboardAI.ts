@@ -78,7 +78,12 @@ export function useDashboardAI(
       return parseBrief(result.response ?? "");
     },
     key,
-    { intervalMs: 60_000, enabled: enabled && Boolean(zoneId) },
+    // This drives a full tool-calling LLM agent (include_xai: true) against a
+    // 90s server timeout. At 60s it fired a second agent call before the first
+    // could return, and it runs from an App-level provider so it did so on
+    // every page. 5 minutes keeps the brief fresh without spending the whole
+    // provider quota on one panel.
+    { intervalMs: 300_000, enabled: enabled && Boolean(zoneId) },
   );
 }
 

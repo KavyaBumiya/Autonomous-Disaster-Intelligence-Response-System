@@ -347,11 +347,17 @@ async def heatmap_combined(
             vc = victim_cells.get(gid, {})
             tc = trust_cells.get(gid, {})
 
+            # The sub-endpoints return centroid_lat/centroid_lng, but the merged
+            # cell previously dropped them, so every .get() fell back to 0.0 and
+            # the bounding box was always {0,0,0,0} -- null island. Any map that
+            # fits to this response collapsed to a point off West Africa.
             combined_cells.append(
                 {
                     "grid_id": gid,
                     "zone_id": pc.get("zone_id", vc.get("zone_id", tc.get("zone_id", ""))),
                     "zone_name": pc.get("zone_name", vc.get("zone_name", tc.get("zone_name", ""))),
+                    "centroid_lat": pc.get("centroid_lat", vc.get("centroid_lat", tc.get("centroid_lat"))),
+                    "centroid_lng": pc.get("centroid_lng", vc.get("centroid_lng", tc.get("centroid_lng"))),
                     "priority_score": pc.get("priority_score"),
                     "victim_density": vc.get("victim_density"),
                     "average_trust_score": tc.get("average_trust_score"),
@@ -359,23 +365,27 @@ async def heatmap_combined(
                 }
             )
 
+        # min()/max() over an empty sequence raises ValueError, which the
+        # handler below turned into a 500. An empty database -- or a zone_id
+        # matching nothing -- is a legitimate answer, not a server error. The
+        # sibling endpoints already guard this way; /combined did not.
+        if not combined_cells:
+            return {
+                "heatmap_type": "combined",
+                "cells": [],
+                "grid_size": 0,
+                "bounding_box": None,
+            }
+
         return {
             "heatmap_type": "combined",
             "cells": combined_cells,
             "grid_size": len(combined_cells),
             "bounding_box": {
-                "min_lat": min(
-                    c.get("centroid_lat", 0.0) for c in combined_cells
-                ),
-                "max_lat": max(
-                    c.get("centroid_lat", 0.0) for c in combined_cells
-                ),
-                "min_lng": min(
-                    c.get("centroid_lng", 0.0) for c in combined_cells
-                ),
-                "max_lng": max(
-                    c.get("centroid_lng", 0.0) for c in combined_cells
-                ),
+                "min_lat": min(c["centroid_lat"] for c in combined_cells),
+                "max_lat": max(c["centroid_lat"] for c in combined_cells),
+                "min_lng": min(c["centroid_lng"] for c in combined_cells),
+                "max_lng": max(c["centroid_lng"] for c in combined_cells),
             },
         }
 

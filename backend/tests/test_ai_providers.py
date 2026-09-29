@@ -8,6 +8,9 @@ Tests:
 - Provider routing
 - Model registry
 """
+import os
+from unittest.mock import patch
+
 import pytest
 from app.ai.providers.base import TaskType, PredictionResult
 from app.ai.providers.huggingface_provider import HuggingFaceProvider, get_huggingface_provider
@@ -15,6 +18,7 @@ from app.ai.providers.local_provider import LocalModelProvider, get_local_provid
 from app.ai.providers.nvidia_provider import NvidiaProvider, get_nvidia_provider
 from app.ai.registry.model_registry import ModelRegistry, get_model_registry, register_default_models
 from app.ai.router.model_router import ModelRouter, get_model_router
+from app.core.config import get_settings
 
 
 def _no_token_init(self):
@@ -130,8 +134,19 @@ class TestNvidiaProvider:
 
     @pytest.mark.asyncio
     async def test_health_no_key(self):
-        provider = NvidiaProvider()
-        health = await provider.health()
+        # backend/.env is auto-loaded by pydantic-settings, so a key is present
+        # in any normal run. Clear it explicitly: this test is about the
+        # no-key path, and without this it passes or fails depending on whether
+        # the developer happens to have a key configured.
+        #
+        # get_settings() is lru_cache'd, so mutating os.environ alone has no
+        # effect -- the cached Settings instance is already built. Clear the
+        # cache inside the patch so the empty key is actually read.
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": ""}):
+            get_settings.cache_clear()
+            provider = NvidiaProvider()
+            health = await provider.health()
+        get_settings.cache_clear()
         assert health["provider"] == "nvidia"
         assert health["status"] == "OFFLINE"
 

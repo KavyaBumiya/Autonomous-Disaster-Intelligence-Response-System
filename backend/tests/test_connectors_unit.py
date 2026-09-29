@@ -23,7 +23,7 @@ import pytest
 import respx
 
 from app.integrations import registry
-from app.integrations.base import ConnectorError
+from app.integrations.base import ConnectorError, _rate_limit_detail
 from app.integrations.gis.nominatim import NominatimConnector
 from app.integrations.gis.osrm import OsrmConnector
 from app.integrations.gis.overpass import (
@@ -54,6 +54,87 @@ def _no_throttle():
         "app.integrations.gis.nominatim._throttle", new=AsyncMock()
     ), patch("app.integrations.gis.overpass._throttle", new=AsyncMock()):
         yield
+
+
+# ── Rate-limit attribution ───────────────────────────────────────────────────
+# A bare "HTTP 429" cannot tell a per-key quota from per-IP sharing from
+# upstream capacity shedding. These pin the capture that makes it attributable,
+# plus the guard that keeps a provider-controlled body out of the logs.
+
+
+def _resp(status: int, headers: dict[str, str] | None = None, body: bytes = b""):
+    return httpx.Response(
+        status,
+        headers=headers or {},
+        content=body,
+        request=httpx.Request("POST", "https://provider.test/v1"),
+    )
+
+
+class TestRateLimitDetail:
+    def test_quota_headers_are_preferred_over_body(self):
+        resp = _resp(
+            429,
+            {
+                "x-ratelimit-remaining-requests": "0",
+                "x-ratelimit-limit-requests": "500",
+            },
+            b'{"error":"rate limited"}',
+        )
+        detail = _rate_limit_detail(resp)
+        assert detail == "limit-requests=500 remaining-requests=0"
+
+    def test_falls_back_to_body_when_no_quota_headers(self):
+        resp = _resp(429, None, b'{"reason":"Daily API request limit exceeded."}')
+        assert _rate_limit_detail(resp) == '{"reason":"Daily API request limit exceeded."}'
+
+    def test_captures_5xx_capacity_shedding(self):
+        resp = _resp(503, None, b"upstream unavailable")
+        assert _rate_limit_detail(resp) == "upstream unavailable"
+
+    def test_empty_body_yields_no_detail(self):
+        assert _rate_limit_detail(_resp(429)) is None
+
+    def test_body_is_truncated(self):
+        resp = _resp(429, None, b'{"reason":"' + b"x" * 900 + b'"}')
+        detail = _rate_limit_detail(resp)
+        assert detail is not None and len(detail) <= 200
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            b'{"key":"nvapi-SECRETVALUE123"}',
+            b'{"auth":"Bearer abcdefghijklmnop"}',
+            b'{"token":"sk-abcdefghijklmnopqrst"}',
+        ],
+    )
+    def test_credential_shaped_body_is_withheld(self, body):
+        detail = _rate_limit_detail(_resp(429, None, body))
+        assert detail is not None
+        assert "withheld" in detail
+        assert "SECRETVALUE" not in detail
+        assert "abcdefghijklmnop" not in detail
+
+
+class TestFailureDetailLifecycle:
+    def test_failure_reason_reaches_the_health_snapshot(self):
+        registry.record_failure("nvidia", "HTTP 429", detail="remaining-requests=0")
+        snap = registry.snapshot()["nvidia"]
+        assert snap["detail"]["last_failure_reason"] == "remaining-requests=0"
+
+    def test_success_clears_a_stale_failure_reason(self):
+        registry.record_failure("nvidia", "HTTP 429", detail="remaining-requests=0")
+        registry.record_success("nvidia", 900.0)
+        snap = registry.snapshot()["nvidia"]
+        # A recovered provider must not keep advertising why it went down.
+        assert "last_failure_reason" not in snap.get("detail", {})
+
+    def test_success_preserves_unrelated_detail_keys(self):
+        registry.record_failure("nvidia", "HTTP 429", detail="remaining-requests=0")
+        registry.record_success("nvidia", 900.0, detail={"model": "nemotron"})
+        snap = registry.snapshot()["nvidia"]
+        assert snap["detail"]["model"] == "nemotron"
+        assert "last_failure_reason" not in snap["detail"]
 
 
 # ── Open-Meteo ──────────────────────────────────────────────────────────────

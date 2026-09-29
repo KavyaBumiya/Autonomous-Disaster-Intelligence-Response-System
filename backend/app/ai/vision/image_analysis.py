@@ -68,6 +68,13 @@ class ImageAnalysisPipeline:
             processed = self._preprocess(validated)
             result["processing_steps"].append("preprocessing")
 
+            # Whether any routed model produced a real prediction. Without this,
+            # a run where every provider fell back returned HTTP 200 with all
+            # fields null, `confidence: 0.0` and `fallback_used: false` -- a
+            # successful-looking analysis of nothing, which reads as "the AI
+            # looked and found no damage" rather than "no model could run".
+            any_model_succeeded = False
+
             # Step 3: Route to appropriate model based on hazard context
             if hazard_context in ("flood", "flash_flood", "river_flood", "coastal_flood"):
                 flood_result = await self._router.route(
@@ -80,7 +87,8 @@ class ImageAnalysisPipeline:
                     result["flood_mapping"] = flood_result.to_dict()
                     result["confidence"] = flood_result.confidence
                     result["model_used"] = flood_result.model_id
-                result["processing_steps"].append("flood_mapping")
+                    any_model_succeeded = True
+                    result["processing_steps"].append("flood_mapping")
 
             elif hazard_context in ("wildfire", "fire"):
                 fire_result = await self._router.route(
@@ -93,7 +101,8 @@ class ImageAnalysisPipeline:
                     result["wildfire_detection"] = fire_result.to_dict()
                     result["confidence"] = fire_result.confidence
                     result["model_used"] = fire_result.model_id
-                result["processing_steps"].append("wildfire_detection")
+                    any_model_succeeded = True
+                    result["processing_steps"].append("wildfire_detection")
 
             # Step 4: Damage assessment (always run)
             damage_result = await self._router.route(
@@ -106,7 +115,8 @@ class ImageAnalysisPipeline:
                 result["damage_assessment"] = damage_result.to_dict()
                 result["confidence"] = max(result["confidence"], damage_result.confidence)
                 result["model_used"] = damage_result.model_id
-            result["processing_steps"].append("damage_assessment")
+                any_model_succeeded = True
+                result["processing_steps"].append("damage_assessment")
 
             # Step 5: Victim detection (if drone/photograph)
             if image_type in ("drone", "photograph"):
@@ -118,10 +128,24 @@ class ImageAnalysisPipeline:
                 )
                 if not victim_result.fallback_used:
                     result["victim_detection"] = victim_result.to_dict()
-                result["processing_steps"].append("victim_detection")
+                    any_model_succeeded = True
+                    result["processing_steps"].append("victim_detection")
 
             # Step 6: Build explanation
             result["explanation"] = self._build_explanation(result)
+
+            if not any_model_succeeded:
+                # Every routed model fell back. Report that plainly instead of
+                # returning a 200 full of nulls that reads as a clean bill of
+                # health from a model that never ran.
+                result["fallback_used"] = True
+                result["explanation"] = (
+                    "No vision model is available for this task. The image was "
+                    "validated and preprocessed, but no provider returned a "
+                    "prediction, so no damage, victim or hazard assessment is "
+                    "shown."
+                )
+
 
         except Exception as exc:
             logger.warning("image_analysis_failed", error=str(exc))
