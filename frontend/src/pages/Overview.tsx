@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import * as Icons from "lucide-react";
 import { useConsoleData } from "../lib/consoleData";
-import { EMPTY_MARKERS } from "../lib/fallbacks";
+
 import LiveMapCanvas from "../components/LiveMapCanvas";
 import { PageHeader, Metric, Recommendation } from "../components/ui";
 
@@ -50,14 +50,6 @@ export function Overview(p: any) {
 
 function MapCard({ mapLayer, setMapLayer, markers, freshness, feeds, zone, incidents, resources, reports }: any) {
   return <section className="panel overflow-hidden"><div className="flex items-center justify-between border-b border-line px-4 py-3"><div className="flex items-center gap-2"><MapPin size={15} className="text-cyan"/><h2 className="text-sm font-semibold">Live operational map</h2><span className="chip"><span className="h-1.5 w-1.5 rounded-full bg-success"/> {feeds}</span></div><div className="flex rounded-lg border border-line bg-slate-950/40 p-1">{["Risk","Routes","Teams"].map(layer => <button key={layer} onClick={() => setMapLayer(layer)} className={`rounded-md px-2.5 py-1.5 text-[10px] ${mapLayer === layer ? "bg-slate-700 text-white" : "text-slate-500"}`}>{layer}</button>)}</div></div><LiveMapCanvas mapLayer={mapLayer} markers={markers} freshness={freshness} zone={zone} incidents={incidents} resources={resources} reports={reports}/></section>;
-}
-
-function MapCanvas({ mapLayer, markers, freshness }: { mapLayer: string; markers?: any; freshness?: string }) {
-  // No live markers means the map is genuinely empty. Rendering placeholder
-  // pins here would put four coloured dots on a blank map with no way to tell
-  // they were invented.
-  const pins = Array.isArray(markers) ? markers : EMPTY_MARKERS;
-  return <div className="relative h-[420px] overflow-hidden map-grid bg-[#091827]"><svg viewBox="0 0 900 520" className="absolute inset-0 h-full w-full"><g opacity=".25" stroke="#7890a8" fill="none" strokeWidth="2"><path d="M50 85 L260 110 L380 55 L560 120 L820 70"/><path d="M10 190 L210 170 L360 235 L540 205 L890 260"/><path d="M20 350 L180 290 L350 330 L510 290 L720 360 L900 320"/><path d="M160 20 L190 500"/><path d="M330 0 L390 520"/><path d="M520 0 L490 520"/><path d="M700 0 L660 520"/></g><g opacity=".32" stroke="#39d9ff" fill="none" strokeWidth="6"><path d="M35 430 C180 320 180 150 340 190 S590 370 865 120"/></g><path className="route" d="M60 420 C190 320 220 220 360 250 S570 350 810 150" fill="none" stroke="#35d39a" strokeWidth="5" strokeLinecap="round"/>{pins.map((p:any,i:number)=><g key={i}><circle cx={p.x} cy={p.y} r="18" fill={p.c} opacity=".12" className={i===0 ? "pulse" : ""}/><circle cx={p.x} cy={p.y} r="7" fill={p.c}/><rect x={p.x+12} y={p.y-12} rx="5" width="64" height="20" fill="#07111f" opacity=".9"/><text x={p.x+22} y={p.y+2} fill={p.c} fontSize="9" fontWeight="700">{p.label}</text></g>)}</svg><div className="absolute bottom-3 left-3 flex flex-wrap gap-2"><span className="chip"><span className="h-2 w-2 rounded-full bg-danger"/> Critical</span><span className="chip"><span className="h-2 w-2 rounded-full bg-amber"/> Warning</span><span className="chip"><span className="h-2 w-2 rounded-full bg-cyan"/> Shelter</span><span className="chip"><span className="h-2 w-2 rounded-full bg-success"/> Safe route</span></div><div className="absolute right-3 top-3 rounded-lg border border-line bg-[#07111f]/90 px-3 py-2 text-[10px] text-slate-400">{mapLayer} layer · Updated {freshness ?? "8"} sec ago</div></div>;
 }
 
 function IncidentMini({ alerts, selected, setSelected, onView }: any) {

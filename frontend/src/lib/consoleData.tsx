@@ -377,11 +377,34 @@ export function ConsoleDataProvider({
   );
 
   const freshness = useMemo(() => {
-    const stamps = [incidents.lastUpdatedAt, resources.lastUpdatedAt, predictions.lastUpdatedAt]
-      .filter((value): value is number => typeof value === "number");
+    const stamps = [
+      health.lastUpdatedAt,
+      commandHealth.lastUpdatedAt,
+      zones.lastUpdatedAt,
+      incidents.lastUpdatedAt,
+      resources.lastUpdatedAt,
+      reports.lastUpdatedAt,
+      teamResources.lastUpdatedAt,
+      available.lastUpdatedAt,
+      approvalQueue.lastUpdatedAt,
+      predictions.lastUpdatedAt,
+      routes.lastUpdatedAt,
+    ].filter((value): value is number => typeof value === "number");
     if (stamps.length === 0) return "—";
     return `${Math.max(0, Math.round((Date.now() - Math.max(...stamps)) / 1000))}s`;
-  }, [incidents.lastUpdatedAt, resources.lastUpdatedAt, predictions.lastUpdatedAt]);
+  }, [
+    health.lastUpdatedAt,
+    commandHealth.lastUpdatedAt,
+    zones.lastUpdatedAt,
+    incidents.lastUpdatedAt,
+    resources.lastUpdatedAt,
+    reports.lastUpdatedAt,
+    teamResources.lastUpdatedAt,
+    available.lastUpdatedAt,
+    approvalQueue.lastUpdatedAt,
+    predictions.lastUpdatedAt,
+    routes.lastUpdatedAt,
+  ]);
 
   const zoneStats = useMemo<ZoneStats>(() => {
     if (!zone && !topIncident) return EMPTY_ZONE_STATS;
@@ -468,9 +491,26 @@ export function ConsoleDataProvider({
         Boolean(incidents.error) ||
         Boolean(resources.error) ||
         Boolean(health.error) ||
-        Boolean(zones.error),
+        Boolean(zones.error) ||
+        Boolean(reports.error) ||
+        Boolean(predictions.error) ||
+        Boolean(routes.error) ||
+        Boolean(approvalQueue.error) ||
+        Boolean(teamResources.error) ||
+        Boolean(available.error) ||
+        Boolean(commandHealth.error),
       isInitialLoading:
-        incidents.isInitialLoading && resources.isInitialLoading && zones.isInitialLoading,
+        incidents.isInitialLoading &&
+        resources.isInitialLoading &&
+        zones.isInitialLoading &&
+        reports.isInitialLoading &&
+        predictions.isInitialLoading &&
+        routes.isInitialLoading &&
+        approvalQueue.isInitialLoading &&
+        teamResources.isInitialLoading &&
+        available.isInitialLoading &&
+        health.isInitialLoading &&
+        commandHealth.isInitialLoading,
       refreshAll,
       aiAvailable: commandHealth.data?.ai_available ?? false,
     }),
@@ -480,7 +520,12 @@ export function ConsoleDataProvider({
       forecastSeries, evidenceRows, markers, feedHealth, zoneStats, freshness,
       predictionSummary, readiness, availability, incidents.data, resources.data,
       topIncident, health.error, zones.error, incidents.error, resources.error, reports.data,
+      reports.error, predictions.error, routes.error, approvalQueue.error,
+      teamResources.error, available.error, commandHealth.error,
       incidents.isInitialLoading, resources.isInitialLoading, zones.isInitialLoading,
+      reports.isInitialLoading, predictions.isInitialLoading, routes.isInitialLoading,
+      approvalQueue.isInitialLoading, teamResources.isInitialLoading,
+      available.isInitialLoading, health.isInitialLoading, commandHealth.isInitialLoading,
       refreshAll, commandHealth.data, approvalQueue.data, predictions.data, dashboardAI, reports.data,
     ],
   );

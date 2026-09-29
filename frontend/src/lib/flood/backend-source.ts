@@ -1,36 +1,45 @@
-import { io, type Socket } from "socket.io-client";
 import type { FloodReading } from "./types";
-import { API_BASE, SOCKET_BASE } from "../config";
+import { apiUrl } from "../config";
 
 export class BackendDataSource {
-  private socket: Socket | null = null;
   private handler: ((reading: FloodReading) => void) | null = null;
+  private intervalId: ReturnType<typeof setInterval> | null = null;
+  private abortController: AbortController | null = null;
 
   subscribe(handler: (reading: FloodReading) => void): () => void {
     this.handler = handler;
-    const target = SOCKET_BASE || API_BASE || undefined;
-    this.socket = io(target, {
-      path: "/socket.io",
-      transports: ["websocket", "polling"],
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 10,
-      timeout: 8000,
-    });
+    this.abortController = new AbortController();
 
-    this.socket.on("flood_reading", (data: FloodReading) => {
-      this.handler?.(data);
-    });
+    const poll = async () => {
+      try {
+        const response = await fetch(apiUrl("/api/flood/data"), {
+          signal: this.abortController?.signal,
+        });
+        if (response.ok) {
+          const data = (await response.json()) as FloodReading;
+          this.handler?.(data);
+        }
+      } catch {
+        // Silently retry on next poll
+      }
+    };
+
+    void poll();
+    this.intervalId = setInterval(poll, 5000);
 
     return () => {
-      this.socket?.disconnect();
-      this.socket = null;
+      if (this.intervalId) clearInterval(this.intervalId);
+      this.intervalId = null;
+      this.abortController?.abort();
+      this.abortController = null;
       this.handler = null;
     };
   }
 
   disconnect(): void {
-    this.socket?.disconnect();
-    this.socket = null;
+    if (this.intervalId) clearInterval(this.intervalId);
+    this.intervalId = null;
+    this.abortController?.abort();
+    this.abortController = null;
   }
 }

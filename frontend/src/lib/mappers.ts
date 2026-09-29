@@ -772,7 +772,7 @@ export function toMapMarkers(input: {
     markers.push({ x, y, c: "#ff5c69", label: "FLD" });
   }
 
-  const blocked = incidents.find((incident) => bandFromScore(num(incident.priority_score)) === "HIGH" && !incidents[0]?.active);
+  const blocked = incidents.find((incident) => bandFromScore(num(incident.priority_score)) === "HIGH" && !incident.active);
   if (blocked) {
     const { x, y } = project({ lat: num(blocked.lat), lng: num(blocked.lng) });
     markers.push({ x, y, c: "#ffbd5a", label: "BLK" });

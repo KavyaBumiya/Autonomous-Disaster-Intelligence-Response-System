@@ -320,7 +320,7 @@ export const api = {
       method: "POST",
       body: { decision_id: decisionId, note: note ?? null },
       signal,
-      timeoutMs: COMMAND_TIMEOUT_MS,
+      timeoutMs: REQUEST_TIMEOUT_MS,
     }),
 
   decisionReject: (decisionId: string, reason: string, signal?: AbortSignal) =>
@@ -328,7 +328,7 @@ export const api = {
       method: "POST",
       body: { decision_id: decisionId, reason },
       signal,
-      timeoutMs: COMMAND_TIMEOUT_MS,
+      timeoutMs: REQUEST_TIMEOUT_MS,
     }),
 
   // ── Command center ──────────────────────────────────────────────────────

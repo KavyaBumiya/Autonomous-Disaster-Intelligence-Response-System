@@ -129,8 +129,12 @@ export function subscribeLiveFeed(
   if (!client.connected) {
     setStatus("connecting");
     client.connect();
+    client.once("connect", () => {
+      client.emit("subscribe", { room: "global_feed" });
+    });
+  } else {
+    client.emit("subscribe", { room: "global_feed" });
   }
-  client.emit("subscribe", { room: "global_feed" });
 
   return () => {
     for (const { event, listener } of bound) client.off(event, listener);
