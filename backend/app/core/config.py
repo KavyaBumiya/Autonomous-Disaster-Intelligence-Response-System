@@ -182,6 +182,16 @@ class Settings(BaseSettings):
     app_env:       str = "development"
     # Comma-separated browser origins for CORS. Empty = allow all (local demo).
     frontend_origin: str = ""
+    # Optional regex for origins that cannot be enumerated ahead of time.
+    #
+    # Needed for Vercel preview deployments: those hosts look like
+    #   https://<project>-git-<sha>-<user>-<scope>.vercel.app
+    # where the commit SHA changes on every push, so a static FRONTEND_ORIGIN
+    # allowlist goes stale immediately and the browser blocks the response even
+    # though the API returns 200. Scope this to your own project rather than
+    # using a blanket "*.vercel.app", which would let any deployment on the
+    # internet call this API. Empty = disabled.
+    frontend_origin_regex: str = ""
 
     @property
     def cors_origins(self) -> list[str]:
@@ -197,27 +207,41 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_regex(self) -> str | None:
-        """Extra origin pattern for local dev servers.
+        """Origin patterns for origins that cannot be listed literally.
 
-        Vite claims 5173 but silently falls back to 5174+ when that port is busy,
-        and the browser then sends an Origin the API does not recognise, breaking
-        the Socket.IO handshake. During development any loopback port is accepted
-        so an auto-incremented port cannot break the console. This is scoped to
-        development on purpose: production keeps the explicit FRONTEND_ORIGIN
-        allowlist and no pattern matching.
+        Two sources are combined:
+
+        1. ``FRONTEND_ORIGIN_REGEX`` — operator-supplied, for hosts that change
+           per deploy (Vercel previews). Never enabled implicitly.
+        2. In development only, any loopback port. Vite claims 5173 but silently
+           falls back to 5174+ when that port is busy, and the browser then
+           sends an Origin the API does not recognise, breaking the Socket.IO
+           handshake. Scoped to development on purpose: production keeps the
+           explicit FRONTEND_ORIGIN allowlist and no loopback pattern.
         """
-        if not self.is_development:
+        patterns: list[str] = []
+        custom = (self.frontend_origin_regex or "").strip()
+        if custom:
+            patterns.append(custom)
+        if self.is_development:
+            patterns.append(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$")
+        if not patterns:
             return None
-        return r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+        return "|".join(f"(?:{p})" for p in patterns)
 
     def is_origin_allowed(self, origin: str | None) -> bool:
-        """Single origin check shared by REST CORS and the Socket.IO handshake.
+        r"""Single origin check shared by REST CORS and the Socket.IO handshake.
 
         Used as the `cors_allowed_origins` callable for python-socketio, whose
         engine compares the Origin header verbatim against a list, and mirrored by
         `cors_origin_regex` for Starlette's CORSMiddleware. Keeping both derived
         from here stops the REST API and the socket from disagreeing about which
         browsers are allowed in.
+
+        `re.fullmatch`, not `re.match`: a pattern ending in `\.vercel\.app` would
+        otherwise also accept `https://app.vercel.app.attacker.example`, which
+        hands the allowlist to whoever owns that domain. Starlette anchors with
+        fullmatch too, so the two stay equivalent.
         """
         if not origin:
             # Non-browser clients (curl, health checks, the e2e smoke test) send
@@ -228,7 +252,7 @@ class Settings(BaseSettings):
         if origin in self.cors_origins:
             return True
         pattern = self.cors_origin_regex
-        if pattern and re.match(pattern, origin):
+        if pattern and re.fullmatch(pattern, origin):
             return True
         return False
 

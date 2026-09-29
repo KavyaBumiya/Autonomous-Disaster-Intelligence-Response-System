@@ -23,6 +23,14 @@ services:
       # ── Frontend origin (comma-separated; empty = allow all) ──
       - key: FRONTEND_ORIGIN
         sync: false
+      # Scoped regex for Vercel preview URLs (commit SHA changes per deploy).
+      # Matches:
+      #   https://autonomous-disaster-int.vercel.app
+      #   https://autonomous-disaster-intelligence.vercel.app
+      #   https://autonomous-disaster-int-git-<sha>-<user>-<scope>.vercel.app
+      # Does NOT match: *.vercel.app (that would allow any Vercel project).
+      - key: FRONTEND_ORIGIN_REGEX
+        value: "https://autonomous-disaster-int(?:elligence)?(-[a-z0-9-]+)*\\.vercel\\.app"
       - key: APP_ENV
         value: production
       # openai-whisper is not in the image (too heavy for the free tier),
