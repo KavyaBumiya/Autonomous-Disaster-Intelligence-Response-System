@@ -17,6 +17,30 @@ services:
       timeout: 5s
       retries: 10
 
+  # Dedicated Postgres for the test suite. Separate from `db` so that running the
+  # tests can never write into the database the application serves — previously
+  # the suite inherited DATABASE_URL and polluted it with "Test Zone" rows that
+  # could be selected as the primary zone by /api/zones.
+  db_test:
+    image: postgis/postgis:15-3.4
+    container_name: aegisai_db_test
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aegisai}
+      POSTGRES_USER: ${POSTGRES_USER:-aegisai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegisai_secret}
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata_test:/var/lib/postgresql/data
+      # Creates aegisai_test on first start; see the comment in that file.
+      - ./backend/tests/docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegisai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   redis:
     image: redis:7-alpine
     container_name: aegisai_redis
@@ -58,4 +82,5 @@ services:
 
 volumes:
   pgdata:
+  pgdata_test:
   audio_uploads:

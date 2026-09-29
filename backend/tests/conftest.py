@@ -27,7 +27,7 @@ import pytest
 # Override with AEGIS_TEST_DATABASE_URL if you need a different target.
 _TEST_DATABASE_URL = os.environ.get(
     "AEGIS_TEST_DATABASE_URL",
-    "postgresql+asyncpg://aegisai:aegisai_secret@localhost:5433/aegisai_test",
+    "postgresql+asyncpg://aegisai:aegisai_secret@localhost:5434/aegisai_test",
 )
 os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
 # Redis is optional for the suite; point it at the same instance but keep the
