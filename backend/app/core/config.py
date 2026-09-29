@@ -79,8 +79,17 @@ class Settings(BaseSettings):
     # browser or included in any HTTP response body.
     nvidia_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
-    nvidia_model: str = "deepseek-ai/deepseek-v4.1-flash"
-    # Empty = no alternate (recommended until another NIM model is verified).
+    # Verified reachable on the NIM catalog with a valid key. The previously
+    # hard-coded default (deepseek-ai/deepseek-v4.1-flash) is still published
+    # but does not answer /chat/completions in time — it burned the full 60s
+    # timeout across all 3 attempts and surfaced as "AI provider unreachable",
+    # so a deployment that omitted NVIDIA_MODEL looked identical to one with a
+    # bad key.
+    nvidia_model: str = "nvidia/nemotron-3-ultra-550b-a55b"
+    # Empty = no alternate. Left empty deliberately: a fallback that itself
+    # hangs costs another 3x60s before the caller sees a result, and no second
+    # model has been verified to answer, so a slow default would be worse than
+    # a fast failure.
     nvidia_fallback_model: str = ""
     nvidia_timeout_seconds: float = 60.0
     # Safety cap on the agentic tool-calling loop (rounds of tool execution).

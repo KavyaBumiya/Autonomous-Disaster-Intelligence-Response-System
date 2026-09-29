@@ -36,6 +36,14 @@ services:
         sync: false
       - key: NVIDIA_API_KEY
         sync: false
+      # Pinned explicitly rather than relying on the code default. The default
+      # (deepseek-ai/deepseek-v4.1-flash) is listed in the NIM catalog but does
+      # not answer /chat/completions — it exhausted the 60s timeout on all 3
+      # attempts and the gateway reported "provider unreachable", which was
+      # indistinguishable from a bad key. Keep this in step with
+      # `nvidia_model` in backend/app/core/config.py.
+      - key: NVIDIA_MODEL
+        value: nvidia/nemotron-3-ultra-550b-a55b
       - key: OPENAI_API_KEY
         sync: false
       - key: MAPBOX_TOKEN
