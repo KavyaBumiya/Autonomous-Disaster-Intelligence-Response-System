@@ -23,13 +23,49 @@ Full walkthrough below.
 
 ---
 
+## Before you start — two things you need
+
+### 1. Which server do you send to?
+
+| | URL |
+|---|---|
+| **Live / shared demo** | `https://autonomous-disaster-intelligence.onrender.com` |
+| Local dev (if you run it) | `http://localhost:8000` |
+
+Use the **first** one unless someone specifically gave you the second. Every
+example below uses `$BASE` — set it once and the rest works unchanged:
+
+```bash
+BASE="https://autonomous-disaster-intelligence.onrender.com"
+```
+
+### 2. Get the bootstrap token from the admin
+
+To register a device you need a **bootstrap token**. This is *not* your device
+token, and it is **not** generated automatically — a person has to hand it to
+you.
+
+> **Ask the AEGIS backend admin for the bootstrap token.** It only exists if
+> they have set `IOT_REGISTRATION_TOKEN` on the server.
+
+If nobody has set it, registration returns `401` for every request. That is the
+safe default: no token means no device can be enrolled. Everything else on the
+system keeps working, and no device should be enrolled until the admin sets it.
+
+Once you have it, keep it out of any web page and out of git.
+
+---
+
 ## Step 1 — Get a device token
 
 This is done **once**, by whoever sets up the system. Not by the device itself.
 
 ```bash
-curl -X POST "http://localhost:8000/api/iot/v1/devices/register" \
-  -H "Authorization: Bearer dev-registration-token-local" \
+BASE="https://autonomous-disaster-intelligence.onrender.com"
+BOOTSTRAP="<token the admin gave you>"
+
+curl -X POST "$BASE/api/iot/v1/devices/register" \
+  -H "Authorization: Bearer $BOOTSTRAP" \
   -H "Content-Type: application/json" \
   -d '{"device_id":"FLOOD-001","name":"Sabarmati Gauge","lat":22.3072,"lng":73.1812}'
 ```
@@ -50,6 +86,9 @@ You get back:
 The token goes in your device's firmware. It is a device secret — don't put it
 in any web page or share it.
 
+Registering the same `device_id` twice returns `409`. Use a new id, or reuse the
+device you already have.
+
 ---
 
 ## Step 2 — Send a reading
@@ -57,7 +96,7 @@ in any web page or share it.
 Every 5–30 seconds, from the device:
 
 ```bash
-curl -X POST "http://localhost:8000/api/iot/v1/telemetry" \
+curl -X POST "$BASE/api/iot/v1/telemetry" \
   -H "Authorization: Bearer YOUR_DEVICE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -267,10 +306,14 @@ Both modes read and display identically.
 
 ## When something goes wrong
 
+**Registering returns `401 Invalid registration token`?** The server has no
+bootstrap token set. This is expected until the admin sets
+`IOT_REGISTRATION_TOKEN` — ask them for it, don't try to work around it.
+
 | Code | What it means | What to do |
 |---|---|---|
-| `401` | No token sent | Check your `Authorization` header |
-| `403` | Wrong device | Token doesn't match that `device_id` |
+| `401` | No token sent, or wrong one | Check your `Authorization` header |
+| `403` | Token doesn't match that `device_id` | Check the `device_id` in your body |
 | `404` | No data yet | Device registered but never reported |
 | `409` | Already registered | Use a different `device_id` |
 | `422` | Bad value | Check units and ranges — see the table above |
@@ -279,6 +322,16 @@ Both modes read and display identically.
 
 **Most common causes:** centimetres sent as metres, no `Authorization` header,
 or a timestamp with no timezone.
+
+**Nothing arrives on the dashboard but the device says it sent fine?** Check
+`/latest` yourself — it is the same call the dashboard makes:
+
+```bash
+curl "$BASE/api/iot/v1/devices/FLOOD-001/latest"
+```
+
+If that returns a reading, the data arrived and the problem is the dashboard. If
+it returns `404`, AEGIS never received it.
 
 ---
 
@@ -371,6 +424,7 @@ Indexed on `(device_id, timestamp)` so history queries stay fast.
 
 ## Checklist before you hand off
 
+- [ ] You have the **bootstrap token** from the admin
 - [ ] Sensor reports **metres**, not centimetres
 - [ ] Flow velocity in **m/s**
 - [ ] `timestamp` includes a timezone (`Z` or `+05:30`)
@@ -384,8 +438,15 @@ Indexed on `(device_id, timestamp)` so history queries stay fast.
 ## Questions?
 
 - **How do I get a device token?** → Step 1. Ask the backend admin for the
-  bootstrap token.
+  bootstrap token first, then exchange it for a device token.
+- **Registration says `401`. Is the API broken?** → No. It means no bootstrap
+  token is set on the server yet. That's the safe default; the admin needs to
+  set `IOT_REGISTRATION_TOKEN`.
+- **Which URL do I use?** → The live one at the top. Only use `localhost` if
+  you're running it yourself.
 - **How often should I send?** → Every 5–30 seconds. The rate limit is 12/minute.
 - **What if the network drops?** → Retry with backoff. `event_id` makes it safe.
 - **Can I send more than water level?** → Yes — add `lat`/`lng`/`battery_pct` to
   the body; the fields are already supported.
+- **Do I need HTTPS?** → Use the `https://` live URL. Plain HTTP is only for
+  local development.
