@@ -608,9 +608,11 @@ class AIGateway:
             logger.warning("nvidia_command_query_failed — AI unavailable", error=str(exc))
             # The key is present but the call did not succeed (bad key, network,
             # rate limit). Report unavailability rather than attributing a
-            # canned reply to the NIM model that was attempted.
+            # canned reply to the NIM model that was attempted. This is a
+            # different message from the no-key case: the provider was reached
+            # and the failure is usually transient.
             return CommandQueryResponse(
-                response=_offline_response(user_query),
+                response=_provider_failed_response(user_query, exc),
                 model_used="unavailable",
                 ai_call_id=log.call_id,
                 ai_used=False,
@@ -1627,7 +1629,7 @@ def _detect_lang(text: str) -> str:
 
 
 def _offline_response(query: str) -> str:
-    """The single message returned when no AI provider can answer a query.
+    """The single message returned when no AI provider is configured.
 
     There is deliberately no keyword routing here. An earlier version matched
     words like "resource" or "weather" and picked a pre-written paragraph, which
@@ -1643,9 +1645,31 @@ def _offline_response(query: str) -> str:
     """
     del query  # the message is identical whatever was asked
     return (
-        "AI analysis is unavailable: no AI provider is configured or the "
-        "provider could not be reached (NVIDIA_API_KEY is unset or the call "
-        "failed). No analysis was performed for your question.\n\n"
+        "AI analysis is unavailable because no AI provider is configured "
+        "(NVIDIA_API_KEY is unset). No analysis was performed for your "
+        "question.\n\n"
+        "Live provider data is unaffected and still available at: "
+        "/api/incidents, /api/resources, /api/zones, "
+        "/api/predictions/what-if, /api/command/critical, "
+        "/api/command/resources/available."
+    )
+
+
+def _provider_failed_response(query: str, exc: Exception) -> str:
+    """The message returned when a provider IS configured but the call failed.
+
+    Distinct from ``_offline_response``: the key is set and the model was
+    reached, but the call did not complete. On the NVIDIA NIM free tier this is
+    usually a rate limit or a capacity 503, which is transient — the useful
+    advice is to retry, not to go and check a key that is already configured.
+    Conflating the two sent operators to debug a missing key while the real
+    problem was a throttle.
+    """
+    del query
+    return (
+        "AI analysis is temporarily unavailable: the provider could not be "
+        "reached (rate limited or timed out). No analysis was performed for "
+        "your question — try again in a moment.\n\n"
         "Live provider data is unaffected and still available at: "
         "/api/incidents, /api/resources, /api/zones, "
         "/api/predictions/what-if, /api/command/critical, "
