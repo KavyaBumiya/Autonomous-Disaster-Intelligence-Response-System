@@ -105,7 +105,7 @@ export class BackendDataSource {
 
     void poll();
     if (this.intervalId) clearInterval(this.intervalId);
-    this.intervalId = setInterval(poll, 5000);
+    this.intervalId = setInterval(poll, 1000);
 
     return () => {
       if (this.intervalId) clearInterval(this.intervalId);
