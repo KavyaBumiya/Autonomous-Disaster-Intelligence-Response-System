@@ -519,6 +519,43 @@ COMMAND_TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_iot_data",
+            "description": (
+                "Get the latest IoT flood sensor telemetry — water level (distance "
+                "from ultrasonic sensor to water surface in mm), flow velocity (m/s), "
+                "device status, battery, signal strength, and flood risk assessment. "
+                "Returns the most recent reading from the primary enrolled device."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "device_id": {"type": "string", "description": "Specific device ID (optional, defaults to first enrolled device)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_iot_history",
+            "description": (
+                "Get historical IoT flood telemetry readings for charting or trend "
+                "analysis. Returns chronological water level and flow velocity data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "device_id": {"type": "string", "description": "Specific device ID (optional)"},
+                    "limit":     {"type": "integer", "description": "Number of readings to return (default 30, max 100)"},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -1588,6 +1625,99 @@ class ToolExecutor:
                 "Satellite provider is not configured in this deployment "
                 "(no credentials). No imagery available — never fabricated (PRD §32)."
             ),
+        }
+
+    async def _tool_get_iot_data(
+        self,
+        device_id: str | None = None,
+    ) -> dict:
+        from sqlalchemy import select
+        from app.models.device import FloodDevice, FloodTelemetry
+
+        if not device_id:
+            device = (
+                await self.db.execute(
+                    select(FloodDevice).limit(1)
+                )
+            ).scalar_one_or_none()
+            if not device:
+                return {"error": "No IoT devices enrolled", "devices": []}
+            device_id = device.device_id
+
+        row = (
+            await self.db.execute(
+                select(FloodTelemetry)
+                .where(FloodTelemetry.device_id == device_id)
+                .order_by(FloodTelemetry.device_timestamp.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+        if not row:
+            return {"error": "No telemetry data", "device_id": device_id}
+
+        device = (
+            await self.db.execute(
+                select(FloodDevice).where(FloodDevice.device_id == device_id).limit(1)
+            )
+        ).scalar_one_or_none()
+
+        return {
+            "device_id": device_id,
+            "water_level_mm": round(row.water_level_m * 1000, 1),
+            "flow_velocity_ms": row.flow_velocity_ms,
+            "timestamp": row.device_timestamp.isoformat() if row.device_timestamp else None,
+            "received_at": row.received_at.isoformat() if row.received_at else None,
+            "risk_level": row.risk_level,
+            "risk_score": row.risk_score,
+            "device_status": device.status if device else None,
+            "battery_pct": device.battery_pct if device else None,
+            "signal_strength": device.signal_strength if device else None,
+            "source": row.source if hasattr(row, 'source') else None,
+            "note": "Live IoT sensor telemetry — deterministic, not LLM-generated.",
+        }
+
+    async def _tool_get_iot_history(
+        self,
+        device_id: str | None = None,
+        limit: int = 30,
+    ) -> dict:
+        from sqlalchemy import select
+        from app.models.device import FloodDevice, FloodTelemetry
+
+        if not device_id:
+            device = (
+                await self.db.execute(
+                    select(FloodDevice).limit(1)
+                )
+            ).scalar_one_or_none()
+            if not device:
+                return {"error": "No IoT devices enrolled", "readings": []}
+            device_id = device.device_id
+
+        limit = max(1, min(int(limit), 100))
+        rows = (
+            await self.db.execute(
+                select(FloodTelemetry)
+                .where(FloodTelemetry.device_id == device_id)
+                .order_by(FloodTelemetry.device_timestamp.asc())
+                .limit(limit)
+            )
+        ).scalars().all()
+
+        return {
+            "device_id": device_id,
+            "readings": [
+                {
+                    "water_level_mm": round(r.water_level_m * 1000, 1),
+                    "flow_velocity_ms": r.flow_velocity_ms,
+                    "timestamp": r.device_timestamp.isoformat() if r.device_timestamp else None,
+                    "risk_level": r.risk_level,
+                }
+                for r in rows
+            ],
+            "total": len(rows),
+            "note": "Historical IoT telemetry — chronological order.",
         }
 
 
