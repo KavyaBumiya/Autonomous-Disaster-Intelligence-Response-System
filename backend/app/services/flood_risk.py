@@ -16,14 +16,14 @@ from dataclasses import dataclass, field
 
 
 # Thresholds in metres, matching frontend/src/lib/flood/simulation.ts
-WATER_LEVEL_LOW_M = 1.5
-WATER_LEVEL_MEDIUM_M = 2.5
-WATER_LEVEL_HIGH_M = 3.5
+WATER_LEVEL_LOW_M = 0.15
+WATER_LEVEL_MEDIUM_M = 0.30
+WATER_LEVEL_HIGH_M = 0.45
 
 # Thresholds in m/s, matching frontend/src/lib/flood/simulation.ts
-FLOW_VELOCITY_LOW_MS = 1.0
-FLOW_VELOCITY_MEDIUM_MS = 2.0
-FLOW_VELOCITY_HIGH_MS = 3.0
+FLOW_VELOCITY_LOW_MS = 0.01
+FLOW_VELOCITY_MEDIUM_MS = 0.03
+FLOW_VELOCITY_HIGH_MS = 0.05
 
 # A device that has not reported for this long is considered stale, and its
 # last reading must not be presented as a current observation.

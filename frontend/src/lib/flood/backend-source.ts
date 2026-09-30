@@ -28,6 +28,7 @@ function toReading(r: LatestReading): FloodReading {
     water_level: r.water_level,
     flow_velocity: r.flow_velocity,
     timestamp: r.timestamp,
+    risk_level: r.risk_level,
   };
 }
 
@@ -132,6 +133,7 @@ export class BackendDataSource {
         water_level: r.water_level,
         flow_velocity: r.flow_velocity,
         timestamp: r.timestamp,
+        risk_level: r.risk_level,
       }));
     } catch {
       return [];
