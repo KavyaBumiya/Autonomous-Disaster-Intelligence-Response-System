@@ -6,28 +6,32 @@ import type {
 } from "./types";
 
 export const WATER_LEVEL_THRESHOLDS = {
-  LOW: 0.15,
-  MEDIUM: 0.30,
-  HIGH: 0.45,
+  LOW: 0.06,
+  MEDIUM: 0.03,
+  HIGH: 0.02,
+  CRITICAL: 0.02,
 } as const;
 
 export const FLOW_VELOCITY_THRESHOLDS = {
-  LOW: 0.01,
-  MEDIUM: 0.03,
-  HIGH: 0.05,
+  LOW: 1.0,
+  MEDIUM: 2.0,
+  HIGH: 2.0,
+  CRITICAL: 3.0,
 } as const;
 
-export function getWaterLevelBand(level: number): WaterLevelBand {
-  if (level >= WATER_LEVEL_THRESHOLDS.HIGH) return "CRITICAL";
-  if (level >= WATER_LEVEL_THRESHOLDS.MEDIUM) return "HIGH";
-  if (level >= WATER_LEVEL_THRESHOLDS.LOW) return "MEDIUM";
+export function getWaterLevelBand(distance: number): WaterLevelBand {
+  if (distance <= WATER_LEVEL_THRESHOLDS.CRITICAL) return "CRITICAL";
+  if (distance <= WATER_LEVEL_THRESHOLDS.HIGH) return "HIGH";
+  if (distance <= WATER_LEVEL_THRESHOLDS.MEDIUM) return "MEDIUM";
+  if (distance <= WATER_LEVEL_THRESHOLDS.LOW) return "LOW";
   return "LOW";
 }
 
 export function getFlowVelocityBand(velocity: number): FlowVelocityBand {
-  if (velocity >= FLOW_VELOCITY_THRESHOLDS.HIGH) return "CRITICAL";
-  if (velocity >= FLOW_VELOCITY_THRESHOLDS.MEDIUM) return "HIGH";
-  if (velocity >= FLOW_VELOCITY_THRESHOLDS.LOW) return "MEDIUM";
+  if (velocity >= FLOW_VELOCITY_THRESHOLDS.CRITICAL) return "CRITICAL";
+  if (velocity >= FLOW_VELOCITY_THRESHOLDS.HIGH) return "HIGH";
+  if (velocity >= FLOW_VELOCITY_THRESHOLDS.MEDIUM) return "MEDIUM";
+  if (velocity >= FLOW_VELOCITY_THRESHOLDS.LOW) return "LOW";
   return "LOW";
 }
 

@@ -50,22 +50,22 @@ Sensors / Citizens / Drones / Satellites / CCTV / Weather / Seismic
                         ▼
               AI BRAIN (Multi-Agent Layer)
    ┌─────────────┬─────────────┬─────────────┬─────────────┐
-   │ Detection    │ Verification │ Victim       │ Route       │
-   │ Agent        │ Agent        │ Detection    │ Intelligence│
+   │  Detection  │Verification │   Victim    │    Route    │
+   │   Agent     │   Agent     │  Detection  │ Intelligence│
    ├─────────────┼─────────────┼─────────────┼─────────────┤
-   │ Resource     │ Prediction   │ Behaviour    │ Volunteer   │
-   │ Commander    │ Engine       │ AI           │ AI          │
+   │  Resource   │ Prediction  │ Behaviour   │ Volunteer   │
+   │  Commander  │  Engine     │    AI       │    AI       │
    ├─────────────┴─────────────┴─────────────┴─────────────┤
-   │              Explainability Layer (XAI)                 │
-   └─────────────────────────┬────────────────────────────┘
-                        ▼
-                DECISION ENGINE
-     (priority scoring, resource allocation, routing)
-                        ▼
-              EMERGENCY DASHBOARD
+   │              Explainability Layer (XAI)               │
+   └─────────────────────────┬─────────────────────────────┘
+                             ▼
+                       DECISION ENGINE
+         (priority scoring, resource allocation, routing)
+                             ▼
+                    EMERGENCY DASHBOARD
         (2D/3D map, alerts, human approval UI)
-                        ▼
-            Rescue Teams / NGOs / Volunteers
+                             ▼
+                Rescue Teams / NGOs / Volunteers
 ```
 
 The dashboard is a **visualization and control surface for decisions the AI has already made** — not the thing generating them.

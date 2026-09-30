@@ -5,7 +5,7 @@ export type FloodReading = {
   risk_level?: string | null;
 };
 
-export type FloodStatus = "NORMAL" | "WARNING" | "CRITICAL";
+export type FloodStatus = "NORMAL" | "WARNING" | "CRITICAL" | "OFFLINE";
 
 export type FloodScenario =
   | "NORMAL"

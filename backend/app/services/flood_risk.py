@@ -16,14 +16,20 @@ from dataclasses import dataclass, field
 
 
 # Thresholds in metres, matching frontend/src/lib/flood/simulation.ts
-WATER_LEVEL_LOW_M = 0.15
-WATER_LEVEL_MEDIUM_M = 0.30
-WATER_LEVEL_HIGH_M = 0.45
+# Water level is measured as distance from ultrasonic sensor to water surface.
+# Lower distance = higher water level (inverse relationship).
+# > 60 mm = NORMAL, 30-60 mm = MEDIUM, 20-30 mm = HIGH, <= 20 mm = CRITICAL
+WATER_LEVEL_LOW_M = 0.06
+WATER_LEVEL_MEDIUM_M = 0.03
+WATER_LEVEL_HIGH_M = 0.02
+WATER_LEVEL_CRITICAL_M = 0.02
 
 # Thresholds in m/s, matching frontend/src/lib/flood/simulation.ts
-FLOW_VELOCITY_LOW_MS = 0.01
-FLOW_VELOCITY_MEDIUM_MS = 0.03
-FLOW_VELOCITY_HIGH_MS = 0.05
+# < 1.0 = LOW, 1.0-1.99 = MEDIUM, 2.0-2.99 = HIGH, >= 3.0 = CRITICAL
+FLOW_VELOCITY_LOW_MS = 1.0
+FLOW_VELOCITY_MEDIUM_MS = 2.0
+FLOW_VELOCITY_HIGH_MS = 2.0
+FLOW_VELOCITY_CRITICAL_MS = 3.0
 
 # A device that has not reported for this long is considered stale, and its
 # last reading must not be presented as a current observation.
@@ -56,14 +62,30 @@ class FloodRiskAssessment:
         }
 
 
-def _band(value: float, low: float, medium: float, high: float) -> tuple[str, int]:
-    """Return (band_name, severity 0-3) for a value against three thresholds."""
-    if value >= high:
+def _band(value: float, low: float, medium: float, high: float, critical: float, *, inverse: bool = False) -> tuple[str, int]:
+    """Return (band_name, severity 0-3) for a value against four thresholds.
+
+    When inverse=True, lower values are more dangerous (e.g. distance from
+    ultrasonic sensor to water surface).
+    """
+    if inverse:
+        if value <= critical:
+            return "CRITICAL", 3
+        if value <= high:
+            return "HIGH", 2
+        if value <= medium:
+            return "MEDIUM", 1
+        if value <= low:
+            return "LOW", 0
+        return "LOW", 0
+    if value >= critical:
         return "CRITICAL", 3
-    if value >= medium:
+    if value >= high:
         return "HIGH", 2
-    if value >= low:
+    if value >= medium:
         return "MEDIUM", 1
+    if value >= low:
+        return "LOW", 0
     return "LOW", 0
 
 
@@ -84,10 +106,10 @@ def assess_flood_risk(
     from datetime import datetime, timezone
 
     wl_band, wl_sev = _band(
-        water_level_m, WATER_LEVEL_LOW_M, WATER_LEVEL_MEDIUM_M, WATER_LEVEL_HIGH_M
+        water_level_m, WATER_LEVEL_LOW_M, WATER_LEVEL_MEDIUM_M, WATER_LEVEL_HIGH_M, WATER_LEVEL_CRITICAL_M, inverse=True
     )
     fv_band, fv_sev = _band(
-        flow_velocity_ms, FLOW_VELOCITY_LOW_MS, FLOW_VELOCITY_MEDIUM_MS, FLOW_VELOCITY_HIGH_MS
+        flow_velocity_ms, FLOW_VELOCITY_LOW_MS, FLOW_VELOCITY_MEDIUM_MS, FLOW_VELOCITY_HIGH_MS, FLOW_VELOCITY_CRITICAL_MS
     )
 
     max_sev = max(wl_sev, fv_sev)

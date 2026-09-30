@@ -20,6 +20,8 @@ import { calculateFloodStatus, getWaterLevelPercent, getFlowVelocityPercent, get
 import { SimulationDataSource, type FloodDataSource } from "../lib/flood/source";
 import { BackendDataSource } from "../lib/flood/backend-source";
 import { generateScenario } from "../lib/flood/generator";
+import { useHealth } from "../lib/hooks";
+import { toFeedHealth } from "../lib/mappers";
 
 const SCENARIOS: { value: FloodScenario; label: string }[] = [
   { value: "NORMAL", label: "Normal" },
@@ -35,6 +37,7 @@ const STATUS_CONFIG: Record<FloodStatus, { icon: typeof CheckCircle2; color: str
   NORMAL: { icon: CheckCircle2, color: "text-success", bg: "bg-success/10", border: "border-success/30", label: "NORMAL" },
   WARNING: { icon: AlertTriangle, color: "text-amber", bg: "bg-amber/10", border: "border-amber/30", label: "WARNING" },
   CRITICAL: { icon: AlertOctagon, color: "text-danger", bg: "bg-danger/10", border: "border-danger/30", label: "CRITICAL" },
+  OFFLINE: { icon: WifiOff, color: "text-slate-400", bg: "bg-slate-500/10", border: "border-slate-500/30", label: "OFFLINE" },
 };
 
 const BAND_COLORS: Record<string, string> = {
@@ -48,6 +51,7 @@ function WaterVisualization({ percent, status }: { percent: number; status: Floo
   const waterColor =
     status === "CRITICAL" ? "bg-danger" :
     status === "WARNING" ? "bg-amber" :
+    status === "OFFLINE" ? "bg-slate-500" :
     "bg-cyan";
 
   return (
@@ -240,6 +244,10 @@ export function FloodSimulation() {
   const [scenario, setScenario] = useState<FloodScenario>("NORMAL");
   const [speed, setSpeed] = useState<SimulationSpeed>(1);
   const [dataSourceMode, setDataSourceMode] = useState<DataSourceMode>("simulation");
+  const [isStale, setIsStale] = useState(false);
+  const health = useHealth();
+  const feedHealth = toFeedHealth(health.data);
+  const isSystemOnline = feedHealth.isNominal;
 
   useEffect(() => {
     const source = new SimulationDataSource();
@@ -279,6 +287,7 @@ export function FloodSimulation() {
       // page leaked one 5 s poller that kept hitting the API after unmount.
       backendUnsubRef.current = backend.subscribe((r) => {
         setReading(r);
+        setIsStale(!r);
         setHistory((prev) => (r ? [...prev.slice(-30), r] : prev));
       });
       // Seed the history chart from stored telemetry so Live mode does not
@@ -329,9 +338,9 @@ export function FloodSimulation() {
     dataSourceRef.current?.setSpeed(newSpeed);
   }, []);
 
-  const status = reading ? calculateFloodStatus(reading) : "NORMAL";
-  const statusConfig = STATUS_CONFIG[status];
-  const StatusIcon = statusConfig.icon;
+  const rawStatus = reading ? calculateFloodStatus(reading) : "NORMAL";
+  const status = !isSystemOnline && rawStatus === "CRITICAL" ? "WARNING" : rawStatus;
+  const displayStatus: FloodStatus = isStale && dataSourceMode === "backend" ? "OFFLINE" : status;
   const waterPercent = reading ? getWaterLevelPercent(reading.water_level) : 0;
   const flowPercent = reading ? getFlowVelocityPercent(reading.flow_velocity) : 0;
   const waterBand = reading ? getWaterLevelBand(reading.water_level) : "LOW";
@@ -347,9 +356,9 @@ export function FloodSimulation() {
             Real-time flood monitoring simulation with configurable scenarios
           </p>
         </div>
-        <div className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${statusConfig.bg} ${statusConfig.border} ${statusConfig.color}`}>
-          <StatusIcon size={14} />
-          {statusConfig.label}
+        <div className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${STATUS_CONFIG[displayStatus].bg} ${STATUS_CONFIG[displayStatus].border} ${STATUS_CONFIG[displayStatus].color}`}>
+          {(() => { const Icon = STATUS_CONFIG[displayStatus].icon; return <Icon size={14} />; })()}
+          {displayStatus}
         </div>
       </div>
 
