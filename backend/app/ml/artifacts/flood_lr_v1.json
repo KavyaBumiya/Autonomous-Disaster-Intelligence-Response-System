@@ -1,0 +1,86 @@
+{
+  "model_id": "aegis-flood-logistic",
+  "model_version": "flood-lr-v1",
+  "hazard": "flood",
+  "task": "binary_classification",
+  "target": "flood occurrence within the antecedent window",
+  "question": "did a flood occur here, given the rain that had already fallen",
+  "trained_at": "2026-10-01T03:15:57.812282+00:00",
+  "feature_columns": [
+    "peak_precip_3d_mm",
+    "precip_10d_mm",
+    "dry_spell_days",
+    "elevation_m"
+  ],
+  "scaler": {
+    "mean": [
+      11.176092544987139,
+      52.94935732647813,
+      2.6375321336760926,
+      584.3187660668381
+    ],
+    "scale": [
+      19.88565304613169,
+      65.43789953046875,
+      3.835261922276445,
+      838.4035424129665
+    ]
+  },
+  "coef": [
+    0.25063318699285264,
+    -0.12242550813253807,
+    -0.8070339255082682,
+    0.05893344107694295
+  ],
+  "intercept": -0.648413087365333,
+  "metrics": {
+    "roc_auc": 0.6405895691609977,
+    "roc_auc_baseline_rule": 0.5824971655328798,
+    "roc_auc_single_feature": 0.6369614512471655,
+    "roc_auc_base_rate": 0.5,
+    "average_precision": 0.44545132562284767,
+    "average_precision_base_rate": 0.37017994858611825,
+    "brier": 0.21685479518373654,
+    "brier_base_rate": 0.2331467542508971,
+    "positive_rate": 0.37017994858611825,
+    "rows": 389.0,
+    "positives": 144.0,
+    "strongest_feature": 1.0,
+    "beats_single_feature": 1.0,
+    "strength": "strong"
+  },
+  "in_sample": {
+    "roc_auc": 0.6773951247165533,
+    "average_precision": 0.5174924676712036,
+    "brier": 0.20889767270812537
+  },
+  "training_data": {
+    "labels": "GDACS FL records (EC JRC), public domain, no API key",
+    "label_url": "https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH",
+    "features": "ERA5 reanalysis via Open-Meteo archive: precipitation_sum",
+    "feature_url": "https://archive-api.open-meteo.com/v1/archive",
+    "builder": "ml/occurrence_dataset.py",
+    "antecedent_days": 10,
+    "rows": 389,
+    "positives": 144,
+    "distinct_events": 144,
+    "year_span": [
+      "2019",
+      "2026"
+    ],
+    "negative_sampling": "245 non-flood dates, drawn from the same jittered coordinates and rejected within 50 km / 20 days of any record",
+    "sampling_positive_rate": 0.37017994858611825,
+    "license": "GDACS: public domain (CC BY 4.0, EC JRC). ERA5: Copernicus."
+  },
+  "limitations": [
+    "Negative sampling over-represents non-flood periods (37% of rows are positive), so the intercept encodes a sampling frame rather than a real-world base rate. Absolute probabilities are optimistic and must be read as a ranking score, not as incidence.",
+    "Only 144 flood events back the fit, so coefficients carry wide uncertainty and are shrunk hard by L2.",
+    "A GDACS FL record means the event was reported somewhere inside a coarse alert polygon, not measured at the record's centroid, so the label is noisy.",
+    "Cross-validation holds out 0.5 degree cells, not unseen countries or unseen climates, so the reported AUC is optimistic for a region outside the training distribution.",
+    "The strongest single feature is precip_10d_mm; the model only earns its place by beating a fit on that column alone.",
+    "Negative sampling over-represents non-flood periods, so the intercept encodes a sampling frame rather than a real-world base rate; treat the score as a ranking, never as a calibrated probability.",
+    "Onset is the GDACS publication date, not the moment water rose.",
+    "Elevation is imputed from the training mean because zones carry no elevation column.",
+    "The two rainfall columns are correlated (r ~ 0.74), so the L2 penalty splits one rainfall signal across both weights and `precip_10d_mm` carries a small *negative* coefficient -- more antecedent rain nominally lowering the score. The combined rainfall term is positive and the out-of-fold AUC beats both baselines, but no single coefficient here should be read as a causal claim about rain."
+  ]
+}

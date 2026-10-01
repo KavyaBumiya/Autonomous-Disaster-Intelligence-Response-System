@@ -16,6 +16,7 @@ import {
   PredictionPage,
   CommanderPage,
   AssistantPage,
+  ReportIntake,
   FloodSimulation,
   type Role,
 } from "./pages";
@@ -35,6 +36,7 @@ export type NavItem =
   | "Prediction Engine"
   | "Resource Commander"
   | "AI Assistant"
+  | "Report Intake"
   | "Flood Simulation";
 
 const RESOURCE_SLOTS: readonly ResourceSlotVisual<typeof Users>[] = [
@@ -91,6 +93,7 @@ function Console() {
 
   const nav: { label: NavItem; icon: any; count?: number; section?: string }[] = [
     { label: "Overview", icon: Gauge },
+    { label: "Report Intake", icon: Radio },
     { label: "Live Map", icon: MapPin },
     { label: "Incidents", icon: Siren, count: data.kpis.activeIncidents },
     { label: "Resources", icon: Package },
@@ -128,7 +131,7 @@ function Console() {
             {(["Command","Rescue","NGO"] as Role[]).map(r => <button key={r} onClick={() => setRole(r)} className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${role === r ? "bg-cyan/10 text-cyan" : "text-slate-500 hover:text-slate-200"}`}>{r}</button>)}
           </div>
           <span className="chip"><Radio size={12} className={data.feedHealth.isStreamNominal ? "text-success" : data.feedHealth.isNominal ? "text-amber" : "text-danger"}/> {data.feedHealth.statusLabel}</span>
-          <button onClick={() => setNotifOpen(!notifOpen)} className="icon-btn"><Bell size={17}/></button>
+          <button onClick={() => setNotifOpen(!notifOpen)} className="icon-btn relative"><Bell size={17}/>{alerts.length > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-danger px-1 text-[8px] font-bold text-white">{Math.min(alerts.length, 9)}</span>}</button>
           <div className="ml-1 flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-bold">OC</div>
         </div>
       </header>
@@ -154,12 +157,35 @@ function Console() {
       )}
 
       {notifOpen && (
-        <div className="fixed right-4 top-16 z-40 w-72 rounded-xl border border-line bg-[#0b1828] p-4 shadow-2xl">
+        <div className="fixed right-4 top-16 z-40 w-80 rounded-xl border border-line bg-[#0b1828] p-4 shadow-2xl">
           <div className="flex items-center justify-between">
             <p className="text-xs font-bold">Notifications</p>
             <button onClick={() => setNotifOpen(false)} className="text-slate-500 hover:text-white"><X size={14}/></button>
           </div>
-          <p className="mt-3 text-[11px] text-slate-400">No new notifications</p>
+          {alerts.length === 0 ? (
+            <p className="mt-3 text-[11px] text-slate-400">
+              No active incidents are being reported for {data.zoneName}.
+            </p>
+          ) : (
+            <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
+              {alerts.slice(0, 8).map(a => (
+                <button key={a.id} onClick={() => { setSelectedAlert(a); setActiveNav("Incidents"); setNotifOpen(false); }}
+                  className="flex w-full items-start gap-2 rounded-lg border border-line bg-slate-950/30 p-2.5 text-left hover:border-cyan/25">
+                  <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${a.level === "CRITICAL" ? "bg-danger" : a.level === "HIGH" ? "bg-amber" : "bg-cyan"}`}/>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[11px] font-semibold text-slate-200">{a.title}</span>
+                    <span className="mt-0.5 block text-[10px] text-slate-500">{a.place} · {a.time} · {a.confidence}% confidence</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {data.pendingActions.length > 0 && (
+            <div className="mt-3 border-t border-line pt-3">
+              <p className="text-[10px] font-semibold text-cyan">{data.pendingActions.length} action{data.pendingActions.length === 1 ? "" : "s"} awaiting approval</p>
+              <button onClick={() => { setActiveNav("Resource Commander"); setNotifOpen(false); }} className="mt-1.5 text-[10px] text-cyan hover:underline">Open approval gate</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -189,11 +215,12 @@ function Console() {
             {activeNav === "Live Map" && <LiveMap mapLayer={mapLayer} setMapLayer={setMapLayer} notify={notify}/>}
             {activeNav === "Incidents" && <Incidents alerts={filteredAlerts} selected={selectedAlert} setSelected={setSelectedAlert} query={query} setQuery={setQuery} notify={notify} refreshAll={refreshAll}/>}
             {activeNav === "Resources" && <Resources notify={notify}/>}
-            {activeNav === "Routes" && <RoutesPage notify={notify} refreshAll={refreshAll} setActiveNav={openNav}/>}
+            {activeNav === "Routes" && <RoutesPage notify={notify} setActiveNav={openNav}/>}
             {activeNav === "Teams" && <TeamsPage notify={notify} setActiveNav={openNav}/>}
             {activeNav === "Prediction Engine" && <PredictionPage notify={notify} refreshAll={refreshAll}/>}
             {activeNav === "Resource Commander" && <CommanderPage notify={notify}/>}
             {activeNav === "AI Assistant" && <AssistantPage role={role} notify={notify}/>}
+            {activeNav === "Report Intake" && <ReportIntake notify={notify} setActiveNav={openNav}/>}
             {activeNav === "Flood Simulation" && <FloodSimulation />}
           </div>
         </main>

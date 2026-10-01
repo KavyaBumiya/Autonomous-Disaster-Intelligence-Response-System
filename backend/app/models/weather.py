@@ -15,6 +15,8 @@ class WeatherReading(Base):
     rainfall_mm_hr: Mapped[float] = mapped_column(Float, default=0.0)
     wind_speed_kmh: Mapped[float] = mapped_column(Float, default=0.0)
     temperature_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    humidity_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pressure_hpa: Mapped[float | None] = mapped_column(Float, nullable=True)
     weather_main: Mapped[str | None] = mapped_column(String(50), nullable=True)
     weather_description: Mapped[str | None] = mapped_column(String(100), nullable=True)
     risk_score: Mapped[float] = mapped_column(Float, default=0.0)  # computed 0.0–1.0

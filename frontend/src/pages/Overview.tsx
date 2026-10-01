@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as Icons from "lucide-react";
 import { useConsoleData } from "../lib/consoleData";
 
@@ -7,10 +7,41 @@ import { PageHeader, Metric, Recommendation } from "../components/ui";
 
 const { Search, RefreshCw, SlidersHorizontal, X, Siren, Zap, Users, Truck, AlertTriangle, ChevronRight, Bot, CircleHelp, Clock3, Layers3, MapPin, Navigation } = Icons;
 
+type AlertFilter = "all" | "critical" | "active" | "verified";
+
+const FILTER_LABELS: ReadonlyArray<{ id: AlertFilter; label: string }> = [
+  { id: "all", label: "All incidents" },
+  { id: "critical", label: "Critical only" },
+  { id: "active", label: "Active" },
+  { id: "verified", label: "Verified" },
+];
+
+function matchesSeverity(alert: any, filter: AlertFilter): boolean {
+  switch (filter) {
+    case "critical":
+      return alert.level === "CRITICAL";
+    case "active":
+      return alert.status === "Active";
+    case "verified":
+      return alert.status === "Verified";
+    default:
+      return true;
+  }
+}
+
 export function Overview(p: any) {
   const { setActiveNav, alertOpen, setAlertOpen, selectedAlert, setSelectedAlert, mapLayer, setMapLayer, filteredAlerts, query, setQuery, notify, refreshAll, filtersOpen, setFiltersOpen } = p;
   const data = useConsoleData();
   const { kpis, freshness, dashboardAI } = data;
+  const [severity, setSeverity] = useState<AlertFilter>("all");
+
+  // Real filtering, not a decorative control: the chips narrow the incident
+  // feed and the KPI tile below, so an operator can triage without leaving the page.
+  const visibleAlerts = useMemo(
+    () => filteredAlerts.filter((a: any) => matchesSeverity(a, severity)),
+    [filteredAlerts, severity],
+  );
+
   useEffect(() => {
     if (dashboardAI.activeEmergency) setAlertOpen(true);
   }, [dashboardAI.activeEmergency, setAlertOpen]);
@@ -26,14 +57,30 @@ export function Overview(p: any) {
           <button onClick={() => setFiltersOpen(false)} className="text-slate-500 hover:text-white"><X size={14}/></button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          {["All incidents", "Critical only", "Active", "Verified"].map(f => (
-            <button key={f} onClick={() => notify(`Filter: ${f}`)} className="rounded-lg border border-line bg-slate-950/40 px-3 py-1.5 text-[10px] text-slate-300 hover:border-cyan/30">{f}</button>
+          {FILTER_LABELS.map(f => (
+            <button
+              key={f.id}
+              onClick={() => setSeverity(f.id)}
+              aria-pressed={severity === f.id}
+              className={`rounded-lg border px-3 py-1.5 text-[10px] transition ${
+                severity === f.id
+                  ? "border-cyan/40 bg-cyan/10 text-cyan"
+                  : "border-line bg-slate-950/40 text-slate-300 hover:border-cyan/30"
+              }`}
+            >
+              {f.label}
+            </button>
           ))}
         </div>
+        <p className="mt-3 text-[10px] text-slate-500">
+          Showing {visibleAlerts.length} of {filteredAlerts.length} incident
+          {filteredAlerts.length === 1 ? "" : "s"}
+          {query ? ` matching "${query}"` : ""}.
+        </p>
       </div>
     )}
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <Metric icon={Siren} label="Active incidents" value={String(kpis.activeIncidents).padStart(2, "0")} sub={`${kpis.criticalIncidents} critical`} tone="danger"/><Metric icon={Zap} label="Prediction confidence" value={kpis.predictionConfidence} sub={kpis.predictionSub} tone="cyan"/><Metric icon={Users} label="People at risk" value={kpis.peopleAtRisk} sub={kpis.peopleAtRiskSub} tone="amber"/><Metric icon={Truck} label="Units deployed" value={kpis.unitsDeployed} sub={kpis.unitsDeployedSub} tone="success"/>
+      <Metric icon={Siren} label="Active incidents" value={String(kpis.activeIncidents).padStart(2, "0")} sub={severity === "all" ? `${kpis.criticalIncidents} critical` : `${visibleAlerts.length} matching filter`} tone="danger"/><Metric icon={Zap} label="Prediction confidence" value={kpis.predictionConfidence} sub={kpis.predictionSub} tone="cyan"/><Metric icon={Users} label="People at risk" value={kpis.peopleAtRisk} sub={kpis.peopleAtRiskSub} tone="amber"/><Metric icon={Truck} label="Units deployed" value={kpis.unitsDeployed} sub={kpis.unitsDeployedSub} tone="success"/>
     </div>
     <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_360px]">
       <MapCard mapLayer={mapLayer} setMapLayer={setMapLayer} markers={data.markers} freshness={freshness} feeds={data.feedHealth.streamLabel} zone={data.zone} incidents={data.incidents} resources={data.resources} reports={data.reports}/>
@@ -43,7 +90,7 @@ export function Overview(p: any) {
         <ResourceMini onView={() => setActiveNav("Resources")}/>
       </aside>
     </div>
-    <div className="mt-4 grid gap-4 lg:grid-cols-2"><IncidentMini alerts={filteredAlerts} selected={selectedAlert} setSelected={setSelectedAlert} onView={() => setActiveNav("Incidents")}/><RouteMini onView={() => setActiveNav("Routes")}/></div>
+    <div className="mt-4 grid gap-4 lg:grid-cols-2"><IncidentMini alerts={visibleAlerts} selected={selectedAlert} setSelected={setSelectedAlert} onView={() => setActiveNav("Incidents")}/><RouteMini onView={() => setActiveNav("Routes")}/></div>
     <div className="mt-4 rounded-2xl border border-line bg-[#0a1726] px-4 py-3"><div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500"><span className="flex items-center gap-1.5"><CircleHelp size={12}/> AI recommendations are decision support, not autonomous commands.</span><span className="hidden text-slate-700 sm:block">•</span><span className="flex items-center gap-1.5"><Clock3 size={12}/> Data freshness: {freshness}</span><span className="hidden text-slate-700 sm:block">•</span><span className="flex items-center gap-1.5"><Layers3 size={12}/> Sources: satellite · citizen reports · field teams</span></div></div>
   </>;
 }

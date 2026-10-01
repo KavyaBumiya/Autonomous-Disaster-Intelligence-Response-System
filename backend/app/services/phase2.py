@@ -1,6 +1,10 @@
 """Deterministic Phase 2 intelligence services.
 
-These services provide explainable MVP baselines until trained models are deployed.
+These services provide explainable MVP baselines. Only hazards with a shipped
+artifact are fitted to observed data; the rest are arithmetic and are reported as
+untrained, because a registry entry that claims `"status": "ready"` for a
+hand-written threshold is a claim the code cannot back up.
+
 They deliberately avoid persistence so they can run against the existing schema.
 """
 from __future__ import annotations
@@ -9,13 +13,94 @@ from dataclasses import dataclass
 from math import hypot
 from typing import Any
 
+from app.ml.occurrence_model import available_models, get_occurrence_model
 
-MODEL_REGISTRY = {
-    "victim-detection": {"version": "v1", "status": "ready", "runtime": "pytorch-cpu"},
-    "behaviour-risk": {"version": "v1", "status": "ready", "runtime": "rules-baseline"},
-    "supply-forecast": {"version": "v1", "status": "ready", "runtime": "rules-baseline"},
-    "volunteer-matching": {"version": "v1", "status": "ready", "runtime": "rules-baseline"},
+# Every entry states what actually computes it. `trained: False` means the
+# numbers come from coefficients a human typed, not from fitting them to data.
+_STATIC_REGISTRY = {
+    "behaviour-risk": {
+        "version": "v1",
+        "runtime": "rules-baseline",
+        "trained": False,
+        "implemented_by": "app.services.phase2.assess_behaviour",
+    },
+    "supply-forecast": {
+        "version": "v1",
+        "runtime": "rules-baseline",
+        "trained": False,
+        "implemented_by": "app.services.phase2.forecast_supply",
+    },
+    "volunteer-matching": {
+        "version": "v1",
+        "runtime": "rules-baseline",
+        "trained": False,
+        "implemented_by": "app.services.phase2.match_volunteers",
+    },
+    "victim-detection": {
+        # Not a Phase 2 function and not trained here: image_analysis runs a
+        # pretrained HuggingFace detector and loads it lazily on first use.
+        "version": "pretrained-checkpoint",
+        "runtime": "huggingface-inference",
+        "trained": False,
+        "implemented_by": "app.ai.vision.image_analysis",
+    },
 }
+
+
+def _trained_entry(hazard: str) -> dict[str, Any]:
+    """Live status of one fitted hazard model, read from its artifact.
+
+    Built per hazard rather than written out once for flood, because three
+    artifacts now ship and a hand-maintained list understated that. Reporting
+    one fitted model while three were on disk is exactly the kind of claim this
+    registry exists to avoid making.
+    """
+    model = get_occurrence_model(hazard)
+    info = model.info()
+    entry_name = f"{hazard}-occurrence"
+    if not info.get("available"):
+        return {
+            "version": "none",
+            "runtime": "rules-baseline (fallback)",
+            "trained": False,
+            "implemented_by": f"app.ml.occurrence_model.OccurrenceModel[{hazard}]",
+            "available": False,
+            "reason": info.get("reason"),
+        }
+    metrics = info.get("metrics") or {}
+    return {
+        "version": info.get("model_version"),
+        "runtime": "trained-logistic",
+        "trained": True,
+        "implemented_by": f"app.ml.occurrence_model.OccurrenceModel[{hazard}]",
+        "available": True,
+        "trained_at": info.get("trained_at"),
+        "roc_auc": metrics.get("roc_auc"),
+        "roc_auc_baseline_rule": metrics.get("roc_auc_baseline_rule"),
+        "beats_single_feature": bool(metrics.get("beats_single_feature", True)),
+        "rows": metrics.get("rows"),
+        "positives": metrics.get("positives"),
+        "training_data": (info.get("training_data") or {}).get("labels"),
+        "limitations": info.get("limitations"),
+    }
+
+
+def model_registry() -> dict[str, Any]:
+    """The full registry, with every fitted hazard reported from its artifact.
+
+    Driven off `available_models()` so a hazard cannot ship an artifact without
+    appearing here, and cannot be listed as trained without an artifact.
+    """
+    trained = {
+        f"{hazard}-occurrence": _trained_entry(hazard)
+        for hazard, available in available_models().items()
+        if available
+    }
+    return {**_STATIC_REGISTRY, **trained}
+
+
+# Kept for existing importers; prefer model_registry() for live status.
+MODEL_REGISTRY = _STATIC_REGISTRY
 
 
 @dataclass(frozen=True)
@@ -92,5 +177,27 @@ def match_volunteers(*, volunteers: list[dict[str, Any]], mission: dict[str, Any
 
 
 def model_status(model_name: str | None = None) -> dict[str, Any]:
-    models = MODEL_REGISTRY if model_name is None else {model_name: MODEL_REGISTRY.get(model_name)}
-    return {"models": models, "healthy": all(value is not None for value in models.values())}
+    """Health of the model registry.
+
+    `healthy` now means every registered model is either loaded or has a
+    working fallback. It previously meant only that the entry existed, so an
+    untrained rule and a fitted model both reported "ready".
+    """
+    models = model_registry() if model_name is None else model_registry().get(model_name)
+    if model_name is not None and models is None:
+        return {"models": {model_name: None}, "healthy": False}
+
+    entries = {model_name: models} if model_name is not None else models
+    healthy = all(
+        entry is not None
+        and (entry.get("available") is not False or not entry.get("trained"))
+        for entry in entries.values()
+    )
+    return {
+        "models": models,
+        "healthy": healthy,
+        "trained_models": [k for k, v in entries.items() if (v or {}).get("trained")],
+        "untrained_models": [
+            k for k, v in entries.items() if v is not None and not v.get("trained")
+        ],
+    }

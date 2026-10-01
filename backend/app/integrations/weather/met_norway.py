@@ -153,6 +153,9 @@ class MetNorwayConnector(BaseConnector):
             temperature_c=_safe_float(instant.get("air_temperature")),
             wind_speed_kmh=(round(wind_ms * 3.6, 2) if wind_ms is not None else None),
             humidity_pct=_safe_float(instant.get("relative_humidity")),
+            pressure_hpa=_safe_float(
+                instant.get("air_pressure_at_sea_level")
+            ),
             weather_code=None,  # met.no exposes symbol codes, not WMO numbers
             weather_main=main,
             weather_description=desc,

@@ -124,6 +124,12 @@ async def _poll_weather_inner() -> None:
                     rainfall_mm_hr=obs.rainfall_mm_hr,
                     wind_speed_kmh=wind,
                     temperature_c=obs.temperature_c,
+                    # Stored so the occurrence models have pressure and humidity
+                    # to read. Both stay None when the provider omits them: a
+                    # plausible-looking substitute would be an invented reading,
+                    # and the models refuse to score on a missing feature anyway.
+                    humidity_pct=obs.humidity_pct,
+                    pressure_hpa=obs.pressure_hpa,
                     weather_main=obs.weather_main,
                     weather_description=obs.weather_description,
                     risk_score=risk,

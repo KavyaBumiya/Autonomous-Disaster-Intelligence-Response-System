@@ -36,8 +36,17 @@ def do_run_migrations(connection):
 
 
 async def run_migrations_online() -> None:
-    import os
-    db_url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+    from app.core.config import get_settings
+
+    # Resolved through the app's Settings rather than `os.getenv` on purpose.
+    # Settings searches CWD .env -> repo root .env -> backend/.env, so a
+    # developer running `alembic` from backend/ gets the same database the app
+    # is configured to serve. A bare `os.getenv` skipped all of that and fell
+    # through to alembic.ini's Docker-Compose-only `db:5432`, which fails DNS
+    # off-Docker -- and, worse, would silently migrate a different database than
+    # the one serving traffic if `db` happened to resolve.
+    db_url = get_settings().database_url
+
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
     elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+asyncpg://"):

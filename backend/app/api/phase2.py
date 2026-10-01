@@ -10,7 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.auth.dependencies import get_current_user
+from app.ml.seismic_prior import get_seismic_prior
 from app.services.phase2 import assess_behaviour, forecast_supply, match_volunteers, model_status
+from ml.hazards import hazard_inventory
 
 router = APIRouter(prefix="/api/phase2")
 
@@ -43,6 +45,32 @@ class VolunteerMatchRequest(BaseModel):
 @router.get("/models")
 async def list_models(_: dict = Depends(get_current_user)):
     return model_status()
+
+
+@router.get("/hazard-inventory")
+async def hazard_inventory_endpoint(_: dict = Depends(get_current_user)):
+    """Which hazards are modelled, which are rule-only, and which are refused.
+
+    Complements `/models`, which only lists models that exist. A console needs
+    the negative space too: "severe weather is absent" is only trustworthy if
+    the API also says it was considered and why it was dropped.
+    """
+    inventory = hazard_inventory()
+    # Seismic is the one hazard declined as a fitted model that still ships a
+    # usable artefact, so its row is annotated rather than left as a bare "no".
+    # `info()` already carries `available` and both version fields; is_prediction
+    # is forced here so a future change to the artefact cannot quietly promote a
+    # climatological rate into something the console shows as a forecast.
+    prior = get_seismic_prior().info()
+    seismic = dict(inventory["declined"].get("seismic", {}))
+    seismic["background_prior"] = {
+        "available": prior.get("available", False),
+        "model_id": prior.get("model_id"),
+        "model_version": prior.get("model_version"),
+        "is_prediction": False,
+    }
+    inventory["declined"]["seismic"] = seismic
+    return inventory
 
 
 @router.get("/models/{model_name}")

@@ -26,14 +26,18 @@ import type {
   ExplainResponse,
   HazardMatrixResponse,
   HealthResponse,
+  HazardInventoryResponse,
   Incident,
   IncidentListResponse,
+  ModelRegistryEntry,
   PredictionsResponse,
   ReportListResponse,
+  ReportAcceptedResponse,
   Resource,
   ResourceListResponse,
   ResourceType,
   RoutesResponse,
+  VoiceAcceptedResponse,
   ZoneListResponse,
   ZoneStatusResponse,
 } from "./types";
@@ -291,6 +295,24 @@ export const api = {
       timeoutMs: 60_000,
     }),
 
+  /**
+   * Which hazards are modelled, which are rule-only, and which are refused with
+   * a reason. Companion to `hazardMatrix`: that one shows five tiles, this one
+   * explains what is behind them and what is deliberately missing.
+   */
+  hazardInventory: (signal?: AbortSignal) =>
+    request<HazardInventoryResponse>("/api/phase2/hazard-inventory", {
+      signal,
+      timeoutMs: 20_000,
+    }),
+
+  /** Trained/untrained status plus measured metrics for every model. */
+  modelRegistry: (signal?: AbortSignal) =>
+    request<{ models: Record<string, ModelRegistryEntry> }>("/api/phase2/models", {
+      signal,
+      timeoutMs: 20_000,
+    }),
+
   computeRoutes: (
     body: {
       zone_id: string;
@@ -307,6 +329,60 @@ export const api = {
       signal,
       timeoutMs: 45_000,
     }),
+
+  // ── Report intake ──────────────────────────────────────────────────────
+  /**
+   * Submit a citizen report. This is the only request path that runs the whole
+   * intelligence pipeline (moderation → NLP → geocode → zone → incident →
+   * verification → detection → decision → XAI), so it is also the fastest way
+   * to exercise the system end to end.
+   *
+   * The backend answers 201 as soon as the report is stored; the pipeline runs
+   * as a background task, so the resulting incident shows up seconds to minutes
+   * later. Track it with `waitForIncident`.
+   */
+  submitReport: (
+    body: {
+      message_text: string;
+      reporter_id?: string;
+      location_string?: string | null;
+      lat?: number | null;
+      lng?: number | null;
+      device_type?: string;
+    },
+    signal?: AbortSignal,
+  ) =>
+    request<ReportAcceptedResponse>("/api/reports", {
+      method: "POST",
+      body,
+      signal,
+    }),
+
+  /** Voice path: multipart upload, transcribed server-side then pipelined. */
+  submitVoiceReport: (
+    body: {
+      audio: Blob;
+      filename?: string;
+      reporter_id?: string;
+      location_string?: string | null;
+      lat?: number | null;
+      lng?: number | null;
+    },
+    signal?: AbortSignal,
+  ) => {
+    const form = new FormData();
+    form.set("audio_file", body.audio, body.filename ?? "report.webm");
+    if (body.reporter_id) form.set("reporter_id", body.reporter_id);
+    if (body.location_string) form.set("location_string", body.location_string);
+    if (body.lat !== undefined && body.lat !== null) form.set("lat", String(body.lat));
+    if (body.lng !== undefined && body.lng !== null) form.set("lng", String(body.lng));
+    return request<VoiceAcceptedResponse>("/api/reports/voice", {
+      method: "POST",
+      body: form,
+      signal,
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
+  },
 
   // ── Decision & approval ────────────────────────────────────────────────
   decisionRecommend: (body: {

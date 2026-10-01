@@ -12,6 +12,7 @@ Normalization:
 
 Unit conventions (verified live against the API):
     precipitation  mm (per hour)     wind_speed_10m  km/h   temperature_2m  °C
+    pressure_msl   hPa (mean sea level)
 """
 from __future__ import annotations
 
@@ -55,7 +56,8 @@ _CODE_DESCRIPTION: dict[int, str] = {
 }
 
 _CURRENT_VARS = (
-    "temperature_2m,precipitation,weather_code,wind_speed_10m,relative_humidity_2m"
+    "temperature_2m,precipitation,weather_code,wind_speed_10m,"
+    "relative_humidity_2m,pressure_msl"
 )
 _HOURLY_VARS = "precipitation,precipitation_probability,temperature_2m"
 _ARCHIVE_HOURLY_VARS = "temperature_2m,precipitation"
@@ -131,6 +133,7 @@ class OpenMeteoConnector(BaseConnector):
             temperature_c=_safe_float(current.get("temperature_2m")),
             wind_speed_kmh=_safe_float(current.get("wind_speed_10m")),
             humidity_pct=_safe_float(current.get("relative_humidity_2m")),
+            pressure_hpa=_safe_float(current.get("pressure_msl")),
             weather_code=code_int,
             weather_main=code_to_main(code_int),
             weather_description=code_to_description(code_int),

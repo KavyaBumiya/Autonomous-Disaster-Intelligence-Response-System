@@ -16,9 +16,11 @@ import type {
   ApprovalQueueResponse,
   AvailableResourcesResponse,
   CommandHealthResponse,
+  HazardInventoryResponse,
   HazardMatrixResponse,
   HealthResponse,
   Incident,
+  ModelRegistryEntry,
   PredictionsResponse,
   Resource,
   Report,
@@ -250,6 +252,30 @@ export function useHazardMatrix(zoneId: string | null) {
     (signal) => api.hazardMatrix(zoneId as string, signal),
     `hazard-matrix:${zoneId ?? "none"}`,
     { intervalMs: 60_000, enabled: Boolean(zoneId) },
+  );
+}
+
+/**
+ * The train/decline ledger.
+ *
+ * Deliberately not zone-scoped and polled rarely: it changes only when the
+ * training pipeline is rebuilt, so re-fetching it on the same 60s cadence as
+ * zone data would be pure waste. 10 minutes is frequent enough to notice a
+ * redeploy without adding measurable load.
+ */
+export function useHazardInventory() {
+  return useApiResource<HazardInventoryResponse>(
+    (signal) => api.hazardInventory(signal),
+    "hazard-inventory",
+    { intervalMs: 600_000 },
+  );
+}
+
+export function useModelRegistry() {
+  return useApiResource<{ models: Record<string, ModelRegistryEntry> }>(
+    (signal) => api.modelRegistry(signal),
+    "model-registry",
+    { intervalMs: 600_000 },
   );
 }
 

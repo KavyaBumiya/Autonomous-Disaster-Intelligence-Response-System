@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --noEmit",
     "smoke": "node smoke/build.mjs",
+    "smoke:live": "node smoke/live-check.mjs",
     "verify": "npm run typecheck && npm run smoke && npm run build",
     "preview": "vite preview"
   },

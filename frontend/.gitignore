@@ -23,7 +23,15 @@ vite.config.d.ts
 
 # Smoke-test artefacts
 smoke/.page.cjs
+smoke/.page.css
+src/__smoke_page.tsx
+src/__smoke_entry.tsx
+src/__live_page.tsx
+src/__live_entry.tsx
 smoke/*.mjs.bak
+smoke/.live.cjs
+smoke/.live.page.cjs
+smoke/.live.page.css
 
 # Vercel CLI link state
 .vercel

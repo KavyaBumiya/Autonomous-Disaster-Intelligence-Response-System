@@ -1,10 +1,23 @@
 /**
- * Fallback-render smoke test.
+ * Offline-render smoke test.
  *
  * Renders every console page with the backend unreachable (the initial render
  * performs no effects, so each hook returns its "no data" state) and asserts
- * that the original hard-coded values still appear. This is what guarantees the
- * wiring did not change what the UI shows when the API is down.
+ * two things:
+ *
+ *   1. Each page still renders its full chrome — headings, panels, controls and
+ *      primary calls to action survive a dead backend, so an operator can
+ *      always see what the system *would* do and why a panel is empty.
+ *
+ *   2. None of the fabricated demo values this console used to ship with
+ *      reappear. Showing "3,200 people at risk" or "42 min" when the read
+ *      failed is the single most damaging failure mode for a command console:
+ *      an operator cannot tell a plausible number from a real one. So the
+ *      absent-data state must be absent-data, and this test fails loudly if a
+ *      hard-coded figure is reintroduced anywhere.
+ *
+ * This is deliberately the inverse of the old assertion set, which required
+ * those very demo strings to be present.
  */
 import { renderToString } from "react-dom/server";
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
@@ -12,6 +25,7 @@ import { build } from "esbuild";
 
 const PAGES = [
   "Overview",
+  "Report Intake",
   "Live Map",
   "Incidents",
   "Resources",
@@ -22,6 +36,7 @@ const PAGES = [
   "AI Assistant",
 ];
 
+/** Strings each page must render with the backend down. */
 const EXPECT = {
   Overview: [
     "Situation overview",
@@ -29,75 +44,75 @@ const EXPECT = {
     "Prediction confidence",
     "People at risk",
     "Units deployed",
-    "Priority alert",
-    "Flash flood risk",
-    "42 min",
-    "3,200",
-    "94% confidence",
-    "3 evidence streams",
-    "Next best actions",
-    "Pre-position 2 rescue teams near Ellis Bridge",
+    "Live operational map",
     "Operational capacity",
     "Rescue teams",
-    "18",
-    "24",
     "Ambulances",
     "Food kits",
     "Water units",
     "Incident feed",
-    "Road blockage detected",
     "Route intelligence",
-    "North rescue corridor",
-    "CLEAR",
-    "BLOCKED",
+    "Recommended movement",
+    "No Emergency Yet",
+    "AI recommendations are decision support",
+  ],
+  "Report Intake": [
+    "Report intake",
+    "Describe what is happening",
+    "New signal",
+    "Submit report",
+    "Pipeline",
+    "Processing status",
+    "No report submitted in this session",
   ],
   "Live Map": [
     "Live operational map",
-    "Sabarmati river belt",
-    "Risk",
+    "Map controls",
+    "Selected zone",
+    "Flood extent",
+    "Prediction cone",
+    "Citizen reports",
+    "Team positions",
+    "Shelters",
+    "Incidents",
     "ETA",
     "People",
     "Confidence",
-    "HIGH",
-    "Open response plan",
   ],
   Incidents: [
     "Incident command queue",
-    "Flash flood risk",
-    "Sabarmati river belt",
+    "No incident selected",
+    "Select an incident to view details",
     "AI assessment",
     "Create response workflow",
   ],
   Resources: [
     "Resource command",
-    "Rescue teams",
-    "Ambulances",
-    "Food kits",
-    "Water units",
     "Allocation queue",
-    "2 rescue teams",
+    "Recommended allocations",
+    "No pending AI allocations for the current incident",
     "Stock health",
-    "Water",
-    "Reserve 180 units",
+    "Supply pressure",
+    "Add resource",
   ],
   Routes: [
     "Route intelligence",
     "Mission routing",
-    "North rescue corridor",
-    "Ashram Road",
-    "Relief camp supply route",
-    "Share recommended route",
+    "Hazard type",
+    "Blocked roads",
+    "Compute routes",
+    "Route insight",
+    "Share with field teams",
   ],
   Teams: [
     "Field teams",
-    "Rescue Team 04",
-    "Medical Unit 07",
-    "NGO Relief 12",
-    "Rescue Team 09",
+    "Team readiness",
+    "Deployment capacity",
     "Available teams",
     "Deployed",
     "Standby",
     "Comms health",
+    "Dispatch team",
   ],
   "Prediction Engine": [
     "Prediction engine",
@@ -118,8 +133,9 @@ const EXPECT = {
   "Resource Commander": [
     "Resource Commander",
     "Allocation plan",
-    "Deploy 2 rescue teams to Ellis Bridge",
+    "No actions are awaiting approval",
     "Constraint monitor",
+    "What could block the plan",
     "Ambulance availability",
     "Rescue team coverage",
     "Water reserve",
@@ -129,18 +145,45 @@ const EXPECT = {
   "AI Assistant": [
     "Ask AegisAI",
     "Operational conversation",
-    "I’m monitoring the active Ahmedabad incident",
-    "What should Command focus on right now?",
     "Suggested prompts",
-    "Summarize the current situation",
     "Trust layer",
     "Human confirmation required",
   ],
 };
 
+/**
+ * Fabricated figures the console must never render on a failed read.
+ *
+ * These were hard-coded demo values in an earlier build. If any reappear, a
+ * failed backend is being disguised as a live, quiet situation.
+ */
+const FORBIDDEN = [
+  "3,200",
+  "42 min",
+  "94% confidence",
+  "Flash flood risk",
+  "Sabarmati river belt",
+  "Rescue Team 04",
+  "Medical Unit 07",
+  "NGO Relief 12",
+  "Rescue Team 09",
+  "North rescue corridor",
+  "Ashram Road",
+  "Relief camp supply route",
+  "Reserve 180 units",
+  "2 rescue teams",
+  "Pre-position 2 rescue teams near Ellis Bridge",
+  "North corridor reduces expected response time by 11 minutes",
+  "I’m monitoring the active Ahmedabad incident",
+];
+
 const SRC = "src/App.tsx";
 const GENERATED_PAGE = "src/__smoke_page.tsx";
 const GENERATED_ENTRY = "src/__smoke_entry.tsx";
+// esbuild extracts the CSS import to a sidecar next to `outfile`, so the
+// bundle is two files. Both are build output, not source.
+const GENERATED_BUNDLE = "smoke/.page.cjs";
+const GENERATED_BUNDLE_CSS = "smoke/.page.css";
 const original = readFileSync(SRC, "utf8");
 
 const stripTags = (html) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
@@ -174,7 +217,7 @@ for (const page of PAGES) {
       bundle: true,
       platform: "node",
       format: "cjs",
-      outfile: "smoke/.page.cjs",
+      outfile: GENERATED_BUNDLE,
       jsx: "automatic",
       logLevel: "error",
       define: {
@@ -191,7 +234,7 @@ for (const page of PAGES) {
   const { execFileSync } = await import("node:child_process");
   let html = "";
   try {
-    html = execFileSync(process.execPath, ["smoke/.page.cjs"], {
+    html = execFileSync(process.execPath, [GENERATED_BUNDLE], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -203,15 +246,26 @@ for (const page of PAGES) {
 
   const text = stripTags(html);
   const missing = EXPECT[page].filter((probe) => !text.includes(probe));
-  if (missing.length === 0) {
-    console.log(`PASS  ${page.padEnd(19)} (${html.length} bytes, ${EXPECT[page].length} probes)`);
+  // Fabricated figures must never render, on any page.
+  const leaked = FORBIDDEN.filter((probe) => text.includes(probe));
+
+  if (missing.length === 0 && leaked.length === 0) {
+    console.log(
+      `PASS  ${page.padEnd(19)} (${html.length} bytes, ${EXPECT[page].length} chrome + ${FORBIDDEN.length} honesty probes)`,
+    );
   } else {
     failures++;
-    console.log(`FAIL  ${page.padEnd(19)} missing: ${JSON.stringify(missing)}`);
+    if (missing.length) console.log(`FAIL  ${page.padEnd(19)} missing: ${JSON.stringify(missing)}`);
+    if (leaked.length) console.log(`FAIL  ${page.padEnd(19)} FABRICATED DATA RENDERED: ${JSON.stringify(leaked)}`);
   }
 }
 
-for (const file of [GENERATED_PAGE, GENERATED_ENTRY]) {
+for (const file of [
+  GENERATED_PAGE,
+  GENERATED_ENTRY,
+  GENERATED_BUNDLE,
+  GENERATED_BUNDLE_CSS,
+]) {
   try {
     unlinkSync(file);
   } catch {}
@@ -219,7 +273,7 @@ for (const file of [GENERATED_PAGE, GENERATED_ENTRY]) {
 
 console.log(
   failures === 0
-    ? `\nALL ${PAGES.length} PAGES RENDER WITH FALLBACK DATA`
+    ? `\nALL ${PAGES.length} PAGES RENDER HONESTLY WITH THE BACKEND DOWN`
     : `\n${failures} PAGE(S) FAILED`,
 );
 process.exit(failures === 0 ? 0 : 1);

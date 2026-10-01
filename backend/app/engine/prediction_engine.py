@@ -19,11 +19,17 @@ Exports:
 - calculate_flood_spread(zone, rainfall_mm_hr, hours) → List[dict]
 - calculate_fire_spread(zone, wind_speed_kmh, hours) → List[dict]
 """
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ml.occurrence_model import get_flood_model, get_occurrence_model
+from app.ml.seismic_prior import get_seismic_prior
+
+# The feature definitions and the list of trainable hazards are shared with the
+# offline pipeline, so the online and offline definitions are the same code.
+from ml.hazards import TRAINED_HAZARDS
 from app.models.zone import Zone
 from app.models.incident import Incident
 
@@ -93,7 +99,14 @@ async def _generate_flood_grid(zone_centroid_lat: float, zone_centroid_lng: floa
 def _flood_propagation_probability(rainfall_mm_hr: float, cell_elevation_relative: float,
                                    distance_to_centroid_km: float) -> float:
     """
-    Simple flood propagation model.
+    Rules-baseline flood probability.
+
+    Retained as the fallback path and as the reference the trained model is
+    measured against (`ml/train_flood_model.py::baseline_rule_scores`). Its
+    coefficients were chosen by hand and never fitted to anything; the trained
+    model in `app.ml.flood_model` is preferred whenever its antecedent-rainfall
+    features can actually be built.
+
     - Higher rainfall → higher probability
     - Lower elevation (relative) → higher flood risk
     - Greater distance from centroid → lower probability (approximation)
@@ -119,6 +132,209 @@ def _flood_propagation_probability(rainfall_mm_hr: float, cell_elevation_relativ
     # Combined probability [0, 1]
     prob = round(rain_factor * 0.5 + elev_risk * 0.3 + dist_factor * 0.2, 3)
     return prob
+
+
+# ── Trained flood model (app.ml.flood_model) ───────────────────────────────
+# The rules above ask "how bad does a cell get once it is raining". The trained
+# model asks the prior question -- "did a flood occur at all in this cell given
+# the recent rain" -- and answers it from 144 GDACS flood records instead of
+# from hand-picked constants. The two are composed rather than swapped: the
+# trained probability sets the zone-level level, and the same 10 km distance
+# falloff spreads it across cells, because the fitted model has no opinion
+# about intra-zone geometry.
+
+FLOOD_MODEL_HISTORY_DAYS = 10
+# The poller samples every ~5 minutes, so a healthy day contributes ~288 rows.
+# Requiring a solid share of the window stops a three-hour-old database from
+# being scored as if it held a decade of antecedent rainfall.
+FLOOD_MODEL_MIN_DAYS = 6
+FLOOD_DRY_DAY_MM = 1.0
+
+# Hazards with a fitted occurrence model. The artifact, the feature list and the
+# feature definitions all live in `ml/hazards.py`; this module only supplies the
+# observations. Seismic and landslide are absent on purpose -- see
+# `ml.hazards.DECLINED_HAZARDS` for why neither can honestly be fitted.
+OCCURRENCE_HAZARDS: tuple[str, ...] = tuple(TRAINED_HAZARDS)
+
+
+def _flood_spatial_decay(distance_to_centroid_km: float) -> float:
+    """Spread a zone-level probability over the grid.
+
+    1.0 at the centroid, easing to 0.5 at the 10 km falloff used by the rules
+    baseline. Multiplying (rather than adding, as the rule does) keeps the
+    centroid cell equal to the trained zone probability.
+    """
+    return 0.5 + 0.5 * max(0.0, 1.0 - distance_to_centroid_km / 10.0)
+
+
+async def _daily_history(
+    zone_id: str, db: AsyncSession, days: int
+) -> dict[date, dict[str, float]]:
+    """Collapse the poller's samples into one record per calendar day.
+
+    A day the poller never sampled is simply absent from the mapping. It is not
+    filled with zeros anywhere downstream: an unobserved day is not evidence of
+    no rain, and reading it that way would manufacture both a drought and a
+    calm -- precisely the conditions these models exist to detect.
+    """
+    from sqlalchemy import and_
+
+    from app.models.weather import WeatherReading
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = (
+        await db.execute(
+            select(
+                WeatherReading.polled_at,
+                WeatherReading.rainfall_mm_hr,
+                WeatherReading.temperature_c,
+                WeatherReading.wind_speed_kmh,
+                WeatherReading.humidity_pct,
+                WeatherReading.pressure_hpa,
+            )
+            .where(
+                and_(
+                    WeatherReading.zone_id == zone_id,
+                    WeatherReading.polled_at >= since,
+                )
+            )
+            .order_by(WeatherReading.polled_at)
+            .limit(20000)
+        )
+    ).all()
+
+    by_day: dict[date, dict[str, float]] = {}
+    for polled_at, rain, temperature, wind, humidity, pressure in rows:
+        if polled_at is None:
+            continue
+        if polled_at.tzinfo is None:
+            polled_at = polled_at.replace(tzinfo=timezone.utc)
+        day = polled_at.date()
+        record = by_day.setdefault(day, {"samples": 0, "rain_total": 0.0})
+        record["samples"] = record.get("samples", 0) + 1
+        if rain is not None:
+            # Samples are rainfall *rates* in mm/hr, so a day's total is the
+            # mean rate over 24 hours, not a sum of five-minute readings.
+            record["rain_total"] = record.get("rain_total", 0.0) + float(rain)
+        if temperature is not None:
+            record["temp_max"] = max(record.get("temp_max", float("-inf")), float(temperature))
+        if wind is not None:
+            record["wind_max"] = max(record.get("wind_max", float("-inf")), float(wind))
+        # Pressure and humidity are averaged over the day's samples, matching the
+        # ERA5 daily means the offline extractor is fitted on. Each is tracked
+        # with its own present-value count: a day whose humidity is entirely NULL
+        # stays absent for humidity rather than averaging to zero, which would
+        # read as bone-dry air.
+        for name, value in (("humidity", humidity), ("pressure", pressure)):
+            if value is None:
+                continue
+            record[f"{name}_sum"] = record.get(f"{name}_sum", 0.0) + float(value)
+            record[f"{name}_n"] = record.get(f"{name}_n", 0) + 1
+
+    for record in by_day.values():
+        samples = record.get("samples", 0)
+        record["precipitation_sum"] = (
+            round(record.get("rain_total", 0.0) / samples * 24.0, 3) if samples else None
+        )
+        record["pressure_msl_mean"] = _daily_mean(record, "pressure")
+        record["relative_humidity_2m_mean"] = _daily_mean(record, "humidity")
+        for key in (
+            "samples", "rain_total",
+            "pressure_sum", "pressure_n", "humidity_sum", "humidity_n",
+        ):
+            record.pop(key, None)
+    return by_day
+
+
+def _daily_mean(record: dict[str, float], prefix: str) -> float | None:
+    """Mean of one aggregated variable for a day, or None if never observed."""
+    count = record.get(f"{prefix}_n", 0)
+    if not count:
+        return None
+    return round(record.get(f"{prefix}_sum", 0.0) / count, 3)
+
+
+def _history_as_archive_entry(
+    history: dict[date, dict[str, float]], days: int, elevation: float
+) -> dict:
+    """Render the daily history in the shape the offline extractor expects.
+
+    The feature definitions in `ml/hazards.py` are the single source of truth for
+    every hazard, and they are written against an Open-Meteo daily block because
+    that is what the training data looked like. Rather than restate the window
+    arithmetic here -- where it would silently drift away from the training code
+    the first time a window changed -- the observations are rendered into the
+    same shape and handed to the same functions.
+    """
+    yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
+    start = yesterday - timedelta(days=days - 1)
+    times: list[str] = []
+    series: dict[str, list[float | None]] = {
+        "precipitation_sum": [],
+        "temperature_2m_max": [],
+        "wind_speed_10m_max": [],
+        "pressure_msl_mean": [],
+        "relative_humidity_2m_mean": [],
+    }
+    for offset in range(days):
+        day = start + timedelta(days=offset)
+        record = history.get(day) or {}
+        times.append(day.isoformat())
+        for name, source in (
+            ("precipitation_sum", "precipitation_sum"),
+            ("temperature_2m_max", "temp_max"),
+            ("wind_speed_10m_max", "wind_max"),
+            ("pressure_msl_mean", "pressure_msl_mean"),
+            ("relative_humidity_2m_mean", "relative_humidity_2m_mean"),
+        ):
+            series[name].append(record.get(source))
+    return {
+        "elevation": elevation,
+        "daily": {"time": times, **series},
+    }
+
+
+async def _occurrence_features(
+    hazard: str, zone_id: str, db: AsyncSession
+) -> dict[str, float] | None:
+    """Build one hazard's model features from the poller history.
+
+    Returns None whenever the model should not be trusted to answer: no usable
+    artifact, too little history, or a feature the poller cannot supply. The
+    caller treats None as "use the rules", which is always safe.
+    """
+    spec = TRAINED_HAZARDS[hazard]
+    model = get_occurrence_model(hazard)
+    if not model.available:
+        return None
+
+    history = await _daily_history(zone_id, db, spec.antecedent_days)
+    if len(history) < min(FLOOD_MODEL_MIN_DAYS, spec.antecedent_days):
+        return None
+
+    # `zones` has no elevation column, so the model is fed the training-set
+    # mean. That makes the standardised elevation exactly zero, i.e. no
+    # contribution at all -- the neutral choice, where an invented terrain
+    # number would not be.
+    elevation = model.training_mean("elevation_m")
+    if elevation is None:
+        return None
+
+    entry = _history_as_archive_entry(history, spec.antecedent_days, elevation)
+    yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
+    features = spec.extract(entry, yesterday + timedelta(days=1), spec.antecedent_days)
+    if features is None:
+        return None
+    return {name: features[name] for name in spec.feature_columns}
+
+
+async def _antecedent_rain_features(zone_id: str, db: AsyncSession) -> dict | None:
+    """Flood antecedent-rainfall features. Kept as the flood-specific name.
+
+    The arithmetic lives in `ml.hazards.extract_flood`, shared with the offline
+    dataset builder, so the online and offline definitions cannot drift apart.
+    """
+    return await _occurrence_features("flood", zone_id, db)
 
 
 async def calculate_flood_spread(zone_id: str, rainfall_mm_hr: float,
@@ -147,6 +363,11 @@ async def calculate_flood_spread(zone_id: str, rainfall_mm_hr: float,
     cells = await _generate_flood_grid(zone["centroid_lat"], zone["centroid_lng"],
                                        zone["radius_meters"], grid_cells=12)
 
+    # Trained model supplies the zone-level probability; the rules baseline
+    # remains the fallback whenever the antecedent rainfall history needed to
+    # build the features is not there yet.
+    trained = await _trained_flood_assessment(zone_id, db)
+
     results = []
     current_expire = datetime.now(timezone.utc)
 
@@ -158,9 +379,19 @@ async def calculate_flood_spread(zone_id: str, rainfall_mm_hr: float,
             lng_diff = cell["lng"] - zone["centroid_lng"]
             dist_km = math.sqrt(lat_diff ** 2 + lng_diff ** 2) * 111.0
 
-            prob = _flood_propagation_probability(
-                rainfall_mm_hr, cell.get("elevation_rel", 0.5), dist_km
-            )
+            if trained is not None:
+                # No rain in the antecedent window means no flood, whatever the
+                # instantaneous gauge says. The fitted model was never shown a
+                # dry baseline, so this gate stays explicit.
+                prob = (
+                    round(trained.probability * _flood_spatial_decay(dist_km), 3)
+                    if rainfall_mm_hr > 0
+                    else 0.0
+                )
+            else:
+                prob = _flood_propagation_probability(
+                    rainfall_mm_hr, cell.get("elevation_rel", 0.5), dist_km
+                )
             if evidence_boost:
                 prob = min(1.0, round(prob + evidence_boost, 3))
 
@@ -192,12 +423,42 @@ async def calculate_flood_spread(zone_id: str, rainfall_mm_hr: float,
     max_intensity = max(r["intensity"] for r in unique) if unique else 0
     flooded_pct = round(len([r for r in unique if r["intensity"] > 0]) / max(len(unique), 1) * 100, 1)
 
-    return {
+    result = {
         "affected_cells": unique,
         "max_intensity": max_intensity,
         "flooded_percentage": flooded_pct,
         "expires_at": datetime.now(timezone.utc) + timedelta(hours=hours),
     }
+    result["model"] = (
+        {
+            "source": "trained",
+            "model_id": trained.model_id,
+            "model_version": trained.model_version,
+            "probability": trained.probability,
+            "features": trained.features,
+            "contributions": trained.contributions,
+            "driver_share": trained.driver_share,
+            "explanation": trained.explain(),
+        }
+        if trained is not None
+        else {
+            "source": "rules-baseline",
+            "model_id": "aegis-flood-rules",
+            "model_version": "v1",
+            "reason": get_flood_model().load_error
+            or "antecedent rainfall history too short to build model features",
+            "coefficients_are": "hand-chosen, never fitted to observations",
+        }
+    )
+    return result
+
+
+async def _trained_flood_assessment(zone_id: str, db: AsyncSession):
+    """Score the zone with the trained model, or None to signal the fallback."""
+    features = await _antecedent_rain_features(zone_id, db)
+    if features is None:
+        return None
+    return get_flood_model().assess(features)
 
 
 # ── Fire Spread ───────────────────────────────────────────────────────────
@@ -644,12 +905,21 @@ async def calculate_seismic_shaking(zone_id: str, hours: int = 12,
     zone = await _get_zone_geometry(zone_id, db)
     event = await _nearest_seismic(zone, db, hours=72, max_km=SEISMIC_DISTANCE_REFERENCE_KM)
 
+    # The background rate is reported alongside the live result, in both
+    # branches, because it answers a different question: not "is the ground
+    # shaking now" but "how seismically active is this place". It is explicitly
+    # not a forecast, and `assess()` carries that qualifier with the number.
+    prior = get_seismic_prior().assess(
+        zone.get("centroid_lat", 0.0), zone.get("centroid_lng", 0.0), hours=float(hours)
+    )
+
     if event is None:
         result = _zone_uniform_projection(zone, 0.0, hours, coverage_threshold=0.0)
         result.update({
             "available": False,
             "reason": "no seismic event within 300 km in the last 72 h",
             "event": None,
+            "background_rate": prior,
         })
         return result
 
@@ -669,6 +939,7 @@ async def calculate_seismic_shaking(zone_id: str, hours: int = 12,
             "usgs_id": event["usgs_id"],
         },
         "shaking_probability": probability,
+        "background_rate": prior,
     })
     return result
 
@@ -786,8 +1057,13 @@ HAZARD_CATALOGUE: dict[str, dict] = {
 
 HAZARD_LIMITATIONS: dict[str, list[str]] = {
     "flood": [
+        "Zone-level probability is fitted (see app/ml/artifacts); the spread "
+        "across cells is a 10 km distance falloff, not a hydraulic simulation.",
         "Cell elevation is assumed uniform; no terrain DEM is available.",
         "Distance-to-centroid is used as a drainage proxy, not a real channel.",
+        "Fitted coefficients come from 144 GDACS flood records, whose alert "
+        "polygons are coarse. The reported probability is a ranking score under "
+        "a 1:2 sampling frame, not calibrated field incidence.",
     ],
     "fire": [
         "Spread direction is a speed-derived bias, not an observed wind vector.",
@@ -798,6 +1074,11 @@ HAZARD_LIMITATIONS: dict[str, list[str]] = {
         "are not modelled.",
         "Zone-uniform: shaking varies negligibly across a few hundred metres, "
         "so no spatial map is produced.",
+        "The background rate reported alongside is a long-run USGS catalogue "
+        "rate, not a forecast. It says how active the region has been, and the "
+        "window probability derived from it is a climatological at-least-one "
+        "figure, not a prediction that an earthquake will occur. Aftershocks "
+        "are not declustered, so a cell's rate is a floor on its activity.",
     ],
     "landslide": [
         "Rainfall is the only driver available. Slope angle, lithology and "
@@ -805,8 +1086,12 @@ HAZARD_LIMITATIONS: dict[str, list[str]] = {
         "Zone-uniform for the same reason as earthquake.",
     ],
     "storm": [
-        "Wind speed only. No gust factor, direction or duration distribution.",
+        "Wind speed only for the rules baseline. No gust factor, direction or "
+        "duration distribution.",
         "No asset vulnerability model; impact is not weighted by what is built.",
+        "A fitted storm-occurrence model ships in app/ml/artifacts but is not "
+        "yet consulted on this path: the projection below is the wind ramp, not "
+        "the trained score.",
     ],
 }
 
@@ -887,6 +1172,7 @@ async def predict_spread(zone_id: str, disaster_type: str, hours_ahead: int = 12
             "evidence": evidence,
             "evidence_boost": evidence_boost,
             "gis_context": gis_ctx,
+            "model": result.get("model"),
         }
     elif disaster_type.lower() == "fire":
         if wind_speed_kmh is not None:
@@ -919,6 +1205,7 @@ async def predict_spread(zone_id: str, disaster_type: str, hours_ahead: int = 12
             "event": result.get("event"),
             "available": result.get("available"),
             "reason": result.get("reason"),
+            "background_rate": result.get("background_rate"),
             "gis_context": gis_ctx,
         }
     elif disaster_type.lower() == "landslide":
@@ -1026,7 +1313,7 @@ async def predict_all_hazards(zone_id: str, hours_ahead: int = 12,
             cells = []
             coverage = None
 
-        hazards.append({
+        hazard_row = {
             "disaster_type": kind,
             "display_name": run_result.get("display_name", kind),
             "modelled": run_result.get("modelled", HAZARD_CATALOGUE[kind]["modelled"]),
@@ -1043,7 +1330,19 @@ async def predict_all_hazards(zone_id: str, hours_ahead: int = 12,
                 if hasattr(run_result.get("expires_at"), "isoformat")
                 else run_result.get("expires_at")
             ),
-        })
+        }
+        # Earthquake only: the long-run USGS rate, hoisted out of `inputs` so the
+        # console has a stable top-level contract for it. It is deliberately a
+        # sibling of the projection, not part of it -- the matrix builder
+        # projects an explicit field set, so anything left only in `inputs` is
+        # invisible to a client reading the documented shape.
+        if kind == "earthquake":
+            prior = run_result.get("background_rate") or (
+                run_result.get("inputs") or {}
+            ).get("background_rate")
+            if prior is not None:
+                hazard_row["background_rate"] = prior
+        hazards.append(hazard_row)
 
     return {
         "zone_id": zone_id,

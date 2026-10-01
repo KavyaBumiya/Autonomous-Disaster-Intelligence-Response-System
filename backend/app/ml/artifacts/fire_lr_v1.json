@@ -1,0 +1,89 @@
+{
+  "model_id": "aegis-fire-logistic",
+  "model_version": "fire-lr-v1",
+  "hazard": "fire",
+  "task": "binary_classification",
+  "target": "fire occurrence within the antecedent window",
+  "question": "did a wildfire start here, given how dry and hot the fuel was",
+  "trained_at": "2026-09-30T19:26:38.917994+00:00",
+  "feature_columns": [
+    "dry_spell_days",
+    "precip_30d_mm",
+    "temp_max_mean_7d_c",
+    "wind_max_mean_7d_kmh",
+    "elevation_m"
+  ],
+  "scaler": {
+    "mean": [
+      9.125,
+      62.143055555555556,
+      26.00992063492065,
+      16.53918650793651,
+      398.5416666666667
+    ],
+    "scale": [
+      10.243476921653333,
+      102.83560009169555,
+      8.079037584577815,
+      5.595418372609373,
+      331.82290865510373
+    ]
+  },
+  "coef": [
+    0.14894700324393265,
+    -1.9600043307656256,
+    1.0991033739499296,
+    0.01119128059763845,
+    0.45021467405364957
+  ],
+  "intercept": -1.0829412641938165,
+  "metrics": {
+    "roc_auc": 0.8181635926222935,
+    "roc_auc_baseline_rule": 0.5,
+    "roc_auc_single_feature": 0.7728548516439455,
+    "roc_auc_base_rate": 0.5,
+    "average_precision": 0.7171038381742616,
+    "average_precision_base_rate": 0.4027777777777778,
+    "brier": 0.17377335496590637,
+    "brier_base_rate": 0.2405478395061728,
+    "positive_rate": 0.4027777777777778,
+    "rows": 144.0,
+    "positives": 58.0,
+    "strongest_feature": 2.0,
+    "beats_single_feature": 1.0,
+    "strength": "strong"
+  },
+  "in_sample": {
+    "roc_auc": 0.83700882117081,
+    "average_precision": 0.7534172782322973,
+    "brier": 0.1605905642264699
+  },
+  "training_data": {
+    "labels": "GDACS WF records (EC JRC), public domain, no API key",
+    "label_url": "https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH",
+    "features": "ERA5 reanalysis via Open-Meteo archive: precipitation_sum, temperature_2m_max, wind_speed_10m_max",
+    "feature_url": "https://archive-api.open-meteo.com/v1/archive",
+    "builder": "ml/occurrence_dataset.py",
+    "antecedent_days": 30,
+    "rows": 144,
+    "positives": 58,
+    "distinct_events": 58,
+    "year_span": [
+      "2021",
+      "2026"
+    ],
+    "negative_sampling": "86 non-fire dates, drawn from the same jittered coordinates and rejected within 50 km / 20 days of any record",
+    "sampling_positive_rate": 0.4027777777777778,
+    "license": "GDACS: public domain (CC BY 4.0, EC JRC). ERA5: Copernicus."
+  },
+  "limitations": [
+    "Negative sampling over-represents non-fire periods (40% of rows are positive), so the intercept encodes a sampling frame rather than a real-world base rate. Absolute probabilities are optimistic and must be read as a ranking score, not as incidence.",
+    "Only 58 fire events back the fit, so coefficients carry wide uncertainty and are shrunk hard by L2.",
+    "A GDACS WF record means the event was reported somewhere inside a coarse alert polygon, not measured at the record's centroid, so the label is noisy.",
+    "Cross-validation holds out 0.5 degree cells, not unseen countries or unseen climates, so the reported AUC is optimistic for a region outside the training distribution.",
+    "The strongest single feature is temp_max_mean_7d_c; the model only earns its place by beating a fit on that column alone.",
+    "Wildfire records are fire *events* at whatever resolution GDACS chose; many are detected once already sizeable, so the model is predicting detection as much as ignition.",
+    "No fuel type, land cover, or humidity: relative humidity is the single strongest known predictor and the poller does not store it.",
+    "Negative sampling over-represents non-fire periods, so the score is a ranking, not a calibrated probability."
+  ]
+}

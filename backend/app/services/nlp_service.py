@@ -35,6 +35,10 @@ settings = get_settings()
 
 # ── spaCy model ───────────────────────────────────────────────
 _nlp = None
+# Latched on first failure. Without it every report retries a load that
+# cannot succeed, and a missing model becomes a per-request penalty
+# instead of one warning line.
+_nlp_unavailable = False
 
 # ── Transformer model ─────────────────────────────────────────
 _tokenizer = None
@@ -44,13 +48,23 @@ _use_transformer = False
 
 
 def _get_nlp():
-    global _nlp
-    if spacy is None:
+    global _nlp, _nlp_unavailable
+    if spacy is None or _nlp_unavailable:
         return None
     if _nlp is None:
-        logger.info("Loading spaCy model")
-        _nlp = spacy.load("en_core_web_sm")
-        ruler = _nlp.add_pipe("entity_ruler", before="ner")
+        # A present-but-modelless spacy raises OSError here. Location
+        # extraction is an enhancement, never a precondition for ingesting a
+        # report, so degrade instead of failing the pipeline.
+        try:
+            candidate = spacy.load("en_core_web_sm")
+        except Exception as exc:
+            _nlp_unavailable = True
+            logger.warning(
+                "spaCy model unavailable; text location extraction disabled",
+                error=str(exc),
+            )
+            return None
+        ruler = candidate.add_pipe("entity_ruler", before="ner")
         patterns = [
             {"label": "GPE", "pattern": "Vadodara"},
             {"label": "GPE", "pattern": "Vishwamitri"},
@@ -61,6 +75,7 @@ def _get_nlp():
             {"label": "GPE", "pattern": "Manjalpur"},
         ]
         ruler.add_patterns(patterns)
+        _nlp = candidate
     return _nlp
 
 

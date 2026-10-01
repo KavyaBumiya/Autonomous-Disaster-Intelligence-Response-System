@@ -1,0 +1,94 @@
+{
+  "model_id": "aegis-storm-logistic",
+  "model_version": "storm-lr-v1",
+  "hazard": "storm",
+  "task": "binary_classification",
+  "target": "storm occurrence within the antecedent window",
+  "question": "did a tropical cyclone affect here, given the preceding pressure and wind",
+  "trained_at": "2026-10-01T03:15:58.170650+00:00",
+  "feature_columns": [
+    "wind_max_3d_kmh",
+    "pressure_min_3d_hpa",
+    "humidity_mean_3d_pct",
+    "precip_3d_mm",
+    "temp_max_mean_3d_c",
+    "elevation_m"
+  ],
+  "scaler": {
+    "mean": [
+      26.73902439024392,
+      1010.8153658536584,
+      76.13983739837398,
+      12.549024390243908,
+      26.41422764227642,
+      242.28780487804877
+    ],
+    "scale": [
+      13.68940623075467,
+      6.195083257993246,
+      11.741131045991416,
+      20.43354514862431,
+      6.772264156235899,
+      584.910053620972
+    ]
+  },
+  "coef": [
+    0.14883988734576312,
+    0.014713522975474966,
+    0.48126342604019784,
+    -0.061891850699113515,
+    0.711382548333839,
+    0.28049137384974254
+  ],
+  "intercept": -0.6926674114132638,
+  "metrics": {
+    "roc_auc": 0.6017797841427979,
+    "roc_auc_baseline_rule": 0.4791796388542964,
+    "roc_auc_single_feature": 0.6003787878787878,
+    "roc_auc_base_rate": 0.5,
+    "average_precision": 0.40046187922516013,
+    "average_precision_base_rate": 0.35609756097560974,
+    "brier": 0.220768663849112,
+    "brier_base_rate": 0.2292920880428317,
+    "positive_rate": 0.35609756097560974,
+    "rows": 410.0,
+    "positives": 146.0,
+    "strongest_feature": 4.0,
+    "beats_single_feature": 1.0,
+    "strength": "strong"
+  },
+  "in_sample": {
+    "roc_auc": 0.6384391863843919,
+    "average_precision": 0.43499922263742163,
+    "brier": 0.21374613025488887
+  },
+  "training_data": {
+    "labels": "GDACS TC records (EC JRC), public domain, no API key",
+    "label_url": "https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH",
+    "features": "ERA5 reanalysis via Open-Meteo archive: precipitation_sum, wind_speed_10m_max, temperature_2m_max, pressure_msl_mean, relative_humidity_2m_mean",
+    "feature_url": "https://archive-api.open-meteo.com/v1/archive",
+    "builder": "ml/occurrence_dataset.py",
+    "antecedent_days": 10,
+    "rows": 410,
+    "positives": 146,
+    "distinct_events": 146,
+    "year_span": [
+      "2019",
+      "2026"
+    ],
+    "negative_sampling": "264 non-storm dates, drawn from the same jittered coordinates and rejected within 50 km / 20 days of any record",
+    "sampling_positive_rate": 0.35609756097560974,
+    "license": "GDACS: public domain (CC BY 4.0, EC JRC). ERA5: Copernicus."
+  },
+  "limitations": [
+    "Negative sampling over-represents non-storm periods (36% of rows are positive), so the intercept encodes a sampling frame rather than a real-world base rate. Absolute probabilities are optimistic and must be read as a ranking score, not as incidence.",
+    "Only 146 storm events back the fit, so coefficients carry wide uncertainty and are shrunk hard by L2.",
+    "A GDACS TC record means the event was reported somewhere inside a coarse alert polygon, not measured at the record's centroid, so the label is noisy.",
+    "Cross-validation holds out 0.5 degree cells, not unseen countries or unseen climates, so the reported AUC is optimistic for a region outside the training distribution.",
+    "The strongest single feature is temp_max_mean_3d_c; the model only earns its place by beating a fit on that column alone.",
+    "A cyclone record is a moving track summarised at a centroid. The centroid at onset is where the storm was, not where it made landfall, so the label and the location can disagree.",
+    "Tropical cyclones are rare and clustered in basins and seasons, so a fitted coefficient is not expected to transfer between basins.",
+    "Mean sea-level pressure comes from reanalysis; it reflects the synoptic field and does not include sub-grid pressure perturbations.",
+    "Pressure is fitted but earns almost nothing: its weight is near zero and *positive*, so more pressure nominally raises the score. A 50 hPa swing -- the difference between a tropical depression and a category-1 cyclone -- moves the logit by about 0.1, against roughly 0.8 for a 20-point humidity swing. The gain from adding pressure and humidity came from humidity; do not read pressure as a working cyclone signal here, and do not sign-edit the artifact to make it look like one."
+  ]
+}

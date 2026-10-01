@@ -133,6 +133,24 @@ export interface ReportListResponse {
   offset: number;
 }
 
+/** `POST /api/reports` — returned as soon as the report row is stored. */
+export interface ReportAcceptedResponse {
+  report_id: string;
+  status: string;
+  source: string;
+  suppressed: boolean;
+}
+
+/** `POST /api/reports/voice` — transcription runs as a background task. */
+export interface VoiceAcceptedResponse {
+  report_id: string;
+  status: string;
+  source: string;
+  transcript: string | null;
+  stt_provider: string | null;
+  message: string;
+}
+
 export interface CriticalIncident {
   incident_id: string;
   zone_id: string;
@@ -234,6 +252,35 @@ export interface HazardMetrics {
   impact_probability?: number | null;
 }
 
+/**
+ * Long-run USGS earthquake rate for a point, from `GET /api/phase2/hazard-inventory`
+ * and the `background_rate` field on an earthquake projection.
+ *
+ * `is_prediction` is hard-coded false on the wire and is typed as literal `false`
+ * so a value of `true` fails the typecheck rather than being silently rendered as
+ * if it were a forecast. This is climatology: it describes how seismically active
+ * a place has been, and cannot say anything about a specific window.
+ */
+export interface SeismicBackgroundRate {
+  source: string;
+  model_id: string;
+  model_version: string;
+  available: boolean;
+  radius_km: number;
+  window_hours: number;
+  min_magnitude: number;
+  events_within_radius: number;
+  cells_within_radius: number;
+  peak_magnitude_in_history: number;
+  rate_per_year: number;
+  window_probability: number;
+  catalogue_years: number;
+  interpretation: string;
+  is_prediction: false;
+  limitations?: string[];
+  degradation_reason?: string | null;
+}
+
 export type HazardType = "flood" | "fire" | "earthquake" | "landslide" | "storm";
 
 /**
@@ -261,6 +308,11 @@ export interface HazardProjection {
   coverage_percentage: number | null;
   metrics: HazardMetrics;
   inputs: Record<string, unknown>;
+  /**
+   * Earthquake only. A long-run seismic rate reported next to the live shaking
+   * result, not folded into it. Absent for other hazards.
+   */
+  background_rate?: SeismicBackgroundRate | null;
   /** Model caveats, straight from the engine. Never hide these. */
   limitations: string[];
   expires_at: string | null;
@@ -274,6 +326,77 @@ export interface HazardMatrixResponse {
   generated_at: string;
   hazard_count: number;
   hazards: HazardProjection[];
+}
+
+/**
+ * One entry from `GET /api/phase2/models`.
+ *
+ * `trained` is the load-bearing field: a `rules-baseline` entry with
+ * `trained: false` is a deterministic function someone wrote, not a model that
+ * learned anything from data. The two are presented identically in the console
+ * unless this flag is respected, which would overstate the whole platform.
+ */
+export interface ModelRegistryEntry {
+  version: string;
+  runtime: string;
+  trained: boolean;
+  implemented_by: string;
+  available?: boolean;
+  trained_at?: string;
+  roc_auc?: number;
+  roc_auc_baseline_rule?: number;
+  beats_single_feature?: boolean;
+  rows?: number;
+  positives?: number;
+  training_data?: string;
+  limitations?: string[];
+  reason?: string;
+  healthy?: boolean;
+}
+
+// ── Hazard inventory ─────────────────────────────────────────────────────
+
+/** A hazard with a fitted model, keyed by hazard name. */
+export interface TrainedHazardSpec {
+  key: string;
+  status: "trained";
+  gdacs_eventtype: string | null;
+  antecedent_days: number;
+  feature_columns: string[];
+  rule_is_shipped: boolean;
+}
+
+/** A hazard deliberately not fitted, with the reason recorded. */
+export interface DeclinedHazardSpec {
+  key: string;
+  status: "declined";
+  gdacs_eventtype: string | null;
+  reason: string;
+  what_would_change_it: string;
+  /**
+   * Present only on `seismic`: that hazard is refused as a fitted model but
+   * still ships a usable background-rate artefact, so it is not a bare "no".
+   */
+  background_prior?: {
+    available: boolean;
+    model_id: string;
+    model_version: string;
+    is_prediction: false;
+  };
+}
+
+/**
+ * `GET /api/phase2/hazard-inventory`.
+ *
+ * The negative space matters as much as the positive: without the declined
+ * rows, an absent hazard is indistinguishable from one nobody considered.
+ */
+export interface HazardInventoryResponse {
+  engine_hazards: HazardType[];
+  trained: Record<string, TrainedHazardSpec>;
+  declined: Record<string, DeclinedHazardSpec>;
+  trained_count: number;
+  declined_count: number;
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────

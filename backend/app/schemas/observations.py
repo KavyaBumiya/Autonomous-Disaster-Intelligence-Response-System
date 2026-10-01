@@ -28,6 +28,9 @@ class WeatherObservation(BaseModel):
     temperature_c: float | None = None
     wind_speed_kmh: float | None = None
     humidity_pct: float | None = None
+    #: Mean sea-level pressure, hPa. The cyclone signal; None when the provider
+    #: does not report it, which is missing data and never substituted.
+    pressure_hpa: float | None = None
     precipitation_probability_pct: float | None = None
     weather_code: int | None = None
     weather_main: str = ""

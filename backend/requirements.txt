@@ -36,6 +36,15 @@ transformers==4.40.2
 torch>=2.0.0
 torchvision>=0.15.0
 langdetect==1.0.9
+# Location extraction (nlp_service._extract_location) is spaCy NER. Without
+# this, _get_nlp() returns None and no report is ever geolocated from its text
+# -- a headline capability that silently disappears in Docker/Render while
+# still working on a dev machine. Declared, not optional.
+spacy>=3.8.0,<3.9.0
+# spaCy ships models outside PyPI, so the pinned wheel URL is the only way to
+# make en_core_web_sm a declared dependency rather than a manual setup step.
+# Version track must match the spacy pin above.
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 
 # ── Deduplication ─────────────────────────────────────────────
 datasketch==1.6.5

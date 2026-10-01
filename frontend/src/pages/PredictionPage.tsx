@@ -1,8 +1,15 @@
 import { useState } from "react";
 import * as Icons from "lucide-react";
 import { useConsoleData } from "../lib/consoleData";
+import { useHazardInventory, useModelRegistry } from "../lib/hooks";
 import { api } from "../lib/api";
-import type { HazardProjection } from "../lib/types";
+import type {
+  DeclinedHazardSpec,
+  HazardInventoryResponse,
+  HazardProjection,
+  ModelRegistryEntry,
+  SeismicBackgroundRate,
+} from "../lib/types";
 import { PageHeader, PanelTitle, MiniStat } from "../components/ui";
 
 const { BrainCircuit, RefreshCw, CheckCircle2, Droplets, Flame, Activity, Users, Clock, TrendingUp, TrendingDown, Minus, AlertTriangle, Shield } = Icons;
@@ -150,6 +157,51 @@ function HazardCard({ hazard }: { hazard: HazardProjection }) {
           {hazard.reason ?? "No qualifying observation for this hazard."}
         </p>
       )}
+
+      {hazard.background_rate ? (
+        <SeismicPriorNote rate={hazard.background_rate} />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The long-run seismic rate, shown beside the live result but never merged
+ * into it.
+ *
+ * The framing is deliberate and mirrors the backend's: this describes how active
+ * the region has been, not what the next few hours hold. A 0.0/yr reading is
+ * the honest answer for Gujarat and is worth stating plainly — it is not an
+ * error and it is not a safety guarantee, since the catalogue only covers
+ * M5.0+ and aftershocks are not declustered.
+ */
+export function SeismicPriorNote({ rate }: { rate: SeismicBackgroundRate }) {
+  if (!rate.available) {
+    return (
+      <p className="mt-2 border-t border-line pt-2 text-[9px] text-slate-600">
+        Background rate unavailable{rate.degradation_reason ? `: ${rate.degradation_reason}` : ""}
+      </p>
+    );
+  }
+  const perDecade = (rate.rate_per_year * 10).toFixed(1);
+  return (
+    <div className="mt-2 border-t border-line pt-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[9px] uppercase tracking-wide text-slate-600">
+          Long-run rate
+        </span>
+        <span className="text-[10px] font-semibold text-slate-400">
+          {rate.rate_per_year.toFixed(2)}/yr
+        </span>
+      </div>
+      <p className="mt-1 text-[9px] leading-relaxed text-slate-600">
+        {rate.events_within_radius === 0
+          ? `No M${rate.min_magnitude.toFixed(1)}+ events within ${rate.radius_km} km in ${rate.catalogue_years.toFixed(1)} years of catalogue.`
+          : `${rate.events_within_radius} M${rate.min_magnitude.toFixed(1)}+ events within ${rate.radius_km} km over ${rate.catalogue_years.toFixed(1)} years — about ${perDecade} per decade.`}
+      </p>
+      <p className="mt-1 text-[9px] leading-relaxed text-amber-500/80">
+        Not a forecast. Regional activity, not a prediction for this window.
+      </p>
     </div>
   );
 }
@@ -169,6 +221,175 @@ const HAZARD_BARS: Record<string, string> = {
   landslide: "bg-amber-500",
   storm: "bg-cyan",
 };
+
+/**
+ * What is actually modelled, and what is deliberately not.
+ *
+ * This exists because a console showing five hazard tiles invites the reading
+ * that five hazards are predicted. Two of them are rule-based, and four more
+ * are absent entirely — lightning and severe weather among them. Listing the
+ * refusals with their reasons turns a silent gap into a documented decision, and
+ * `what_would_change_it` makes the blocker actionable rather than a dead end.
+ */
+export function ModelTransparencyPanel({
+  inventory: inventoryOverride,
+  registry: registryOverride,
+}: {
+  inventory?: HazardInventoryResponse | null;
+  registry?: { models: Record<string, ModelRegistryEntry> } | null;
+} = {}) {
+  // Data may be injected so this can be rendered against a live payload in the
+  // live-check harness; otherwise it is fetched by the hooks as normal.
+  const liveInventory = useHazardInventory();
+  const liveRegistry = useModelRegistry();
+  const inventory = inventoryOverride !== undefined ? { data: inventoryOverride, isInitialLoading: false, error: null, lastUpdatedAt: 0, refresh: () => {} } : liveInventory;
+  const registry = registryOverride !== undefined ? { data: registryOverride, isInitialLoading: false, error: null, lastUpdatedAt: 0, refresh: () => {} } : liveRegistry;
+  const [openHazard, setOpenHazard] = useState<string | null>(null);
+
+  if (inventory.isInitialLoading && !inventory.data) {
+    return (
+      <section className="panel p-4">
+        <PanelTitle eyebrow="Coverage" title="Model coverage" />
+        <p className="mt-3 text-[9px] text-slate-500">Loading coverage ledger…</p>
+      </section>
+    );
+  }
+
+  if (!inventory.data) {
+    return null;
+  }
+
+  const { trained, declined, trained_count: trainedCount, declined_count: declinedCount } =
+    inventory.data;
+  const trainedList = Object.values(trained ?? {});
+  const declinedList = Object.values(declined ?? {}).sort((a, b) =>
+    a.key.localeCompare(b.key),
+  );
+  const models = registry.data?.models ?? {};
+  const trainedModelMetrics = Object.entries(models).filter(([, m]) => m.trained);
+
+  return (
+    <section className="panel p-4">
+      <div className="flex items-start justify-between gap-3">
+        <PanelTitle eyebrow="Coverage" title="Model coverage" />
+        <div className="flex flex-shrink-0 gap-1.5">
+          <span className="chip !border-emerald-800 !text-emerald-400">{trainedCount} fitted</span>
+          <span className="chip !border-slate-700 !text-slate-500">{declinedCount} declined</span>
+        </div>
+      </div>
+
+      <p className="mt-2 text-[9px] leading-relaxed text-slate-500">
+        A hazard absent from the projection grid is not a coverage gap — it was considered and
+        declined, with the reason recorded in the source.
+      </p>
+
+      {trainedList.length > 0 && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {trainedList.map((spec) => {
+            const metric = trainedModelMetrics.find(([name]) =>
+              name.startsWith(spec.key),
+            )?.[1];
+            const auc = metric?.roc_auc;
+            return (
+              <div key={spec.key} className="rounded-lg border border-line bg-slate-950/30 p-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-semibold capitalize text-slate-200">
+                    {spec.key}
+                  </span>
+                  {spec.rule_is_shipped ? (
+                    <span
+                      className="text-[8px] uppercase tracking-wide text-slate-500"
+                      title="A deterministic rule ships alongside the model as the baseline it must beat"
+                    >
+                      +rule
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-1 text-[9px] text-slate-500">
+                  {auc !== undefined
+                    ? `ROC-AUC ${auc.toFixed(2)} · ${metric?.rows ?? 0} rows`
+                    : `${spec.feature_columns.length} features · ${spec.antecedent_days}d window`}
+                </p>
+                {auc !== undefined && metric?.roc_auc_baseline_rule !== undefined ? (
+                  <p
+                    className={`mt-0.5 text-[9px] ${
+                      auc > metric.roc_auc_baseline_rule ? "text-emerald-500" : "text-amber-500"
+                    }`}
+                  >
+                    vs rule {auc > metric.roc_auc_baseline_rule ? "+" : ""}
+                    {(auc - metric.roc_auc_baseline_rule).toFixed(3)}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {declinedList.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          <p className="text-[9px] uppercase tracking-wide text-slate-600">Not modelled, on purpose</p>
+          {declinedList.map((entry) => (
+            <DeclinedRow
+              key={entry.key}
+              entry={entry}
+              open={openHazard === entry.key}
+              onToggle={() =>
+                setOpenHazard((v) => (v === entry.key ? null : entry.key))
+              }
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DeclinedRow({
+  entry,
+  open,
+  onToggle,
+}: {
+  entry: DeclinedHazardSpec;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const prior = entry.background_prior;
+  return (
+    <div className="rounded-lg border border-line bg-slate-950/20">
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-[10px] font-medium capitalize text-slate-400">
+            {entry.key.replace(/_/g, " ")}
+          </span>
+          {prior?.available ? (
+            <span
+              className="chip flex-shrink-0 !border-purple-800 !text-purple-400"
+              title="Not a forecast — a long-run regional rate"
+            >
+              rate only
+            </span>
+          ) : null}
+        </span>
+        <span className="flex-shrink-0 text-[9px] text-slate-600">{open ? "Hide" : "Why?"}</span>
+      </button>
+      {open ? (
+        <div className="space-y-2 border-t border-line px-2.5 py-2">
+          <p className="text-[9px] leading-relaxed text-slate-400">{entry.reason}</p>
+          <div className="border-t border-line/60 pt-2">
+            <p className="text-[9px] uppercase tracking-wide text-emerald-600">What would change it</p>
+            <p className="mt-1 text-[9px] leading-relaxed text-slate-500">
+              {entry.what_would_change_it}
+            </p>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function PredictionPage({ notify, refreshAll }: any) {
   const { forecastSeries, evidenceRows, predictionSummary, topIncident, predictions, hazardMatrix } = useConsoleData();
@@ -367,6 +588,8 @@ export function PredictionPage({ notify, refreshAll }: any) {
               </>
             )}
           </section>
+
+          <ModelTransparencyPanel />
 
           {/* Fire projection (if available) */}
           {fireData && (

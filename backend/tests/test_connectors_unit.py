@@ -149,6 +149,7 @@ _OPEN_METEO_CURRENT = {
         "weather_code": 63,
         "wind_speed_10m": 41.0,
         "relative_humidity_2m": 88,
+        "pressure_msl": 1004.2,
     },
 }
 
@@ -166,6 +167,7 @@ async def test_open_meteo_current_normalization():
     assert obs.temperature_c == 29.4
     assert obs.wind_speed_kmh == 41.0
     assert obs.humidity_pct == 88
+    assert obs.pressure_hpa == 1004.2
     assert obs.weather_code == 63
     assert obs.weather_main == "Rain"
     assert obs.timestamp == datetime(2026, 9, 25, 12, 0)
@@ -391,6 +393,7 @@ _MET_COMPACT = {
                         "air_temperature": 29.1,
                         "wind_speed": 5.0,          # m/s → 18.0 km/h
                         "relative_humidity": 76.7,
+                        "air_pressure_at_sea_level": 1007.3,
                     }},
                     "next_1_hours": {
                         "summary": {"symbol_code": "heavyrain_day"},
@@ -425,6 +428,7 @@ async def test_met_norway_current_normalization():
     assert obs.temperature_c == 29.1
     assert obs.wind_speed_kmh == 18.0          # 5.0 m/s × 3.6
     assert obs.humidity_pct == 76.7
+    assert obs.pressure_hpa == 1007.3
     assert obs.rainfall_mm_hr == 2.5           # next_1_hours bucket
     assert obs.weather_main == "Rain"
     assert obs.weather_description == "Heavy rain"
