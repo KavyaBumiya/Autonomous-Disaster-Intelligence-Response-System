@@ -522,7 +522,7 @@ export function FloodSimulation() {
             </span>
           )}
           <div className="h-6 w-px bg-line" />
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" style={{display: isSystemOnline ? 'none' : 'flex'}}>
             <span className="text-xs text-slate-500">Scenario:</span>
             <select
               value={scenario}
